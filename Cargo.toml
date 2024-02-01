@@ -1,0 +1,14 @@
+[package]
+name = "bach"
+version = "0.1.0"
+edition = "2021"
+authors = ["Marco Elver <me@marcoelver.com>"]
+
+[dependencies]
+rand = "0.8.5"
+
+# Build smaller binaries in release mode.
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true  # largest size reduction
