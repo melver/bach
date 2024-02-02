@@ -21,6 +21,7 @@ pub trait Genome: Sized {
 
     /// Compares fitness of `self` with `other`, where a better fitness compares less than a worse
     /// fitness. Allows using various sorting functions to order Genomes from best to worst.
+    /// Assumes that larger fitness value means better.
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         assert!(self.is_eval());
         assert!(other.is_eval());
@@ -97,14 +98,16 @@ pub struct GenomePool<G> {
 pub struct GenomeRef(usize, usize);
 
 impl<G: Genome + Default> GenomePool<G> {
-    pub fn new(blueprint: &G, target_len: usize, mut_prob: f32) -> Self {
+    pub fn new(blueprint: G, target_len: usize, mut_prob: f32) -> Self {
         // Mutation rate is a percentage.
         assert!(mut_prob >= 0.0);
         assert!(mut_prob <= 1.0);
         assert_ne!(target_len, 0);
-        let init_population = (0..target_len)
-            .map(|_| (0, G::default().with_blueprint(blueprint)))
+        let mut init_population: Vec<(u64, G)> = (0..target_len - 1)
+            .map(|_| (0, G::default().with_blueprint(&blueprint)))
             .collect();
+        // Don't let the blueprint go to waste.
+        init_population.push((0, blueprint));
         Self {
             mut_prob,
             generation: 0,
@@ -195,6 +198,19 @@ impl<G: Genome + Default> GenomePool<G> {
         GenomeRef(self.get_tag(), idx)
     }
 
+    pub fn select_best(&self) -> GenomeRef {
+        let mut best = 0;
+
+        for i in 1..self.population.len() {
+            let genome = &self.population[i];
+            if let cmp::Ordering::Less = genome.1.cmp(&self.population[best].1) {
+                best = i;
+            }
+        }
+
+        GenomeRef(self.get_tag(), best)
+    }
+
     /// Select all genomes in the current population.
     pub fn select_all(&self) -> Vec<GenomeRef> {
         let tag = self.get_tag();
@@ -206,7 +222,7 @@ impl<G: Genome + Default> GenomePool<G> {
     /// Sort the `selection` of indices into `population` based on the fitness of the indexed
     /// Genome, from best to worst.
     pub fn sort_selection(&self, selection: &mut [GenomeRef]) {
-        selection.sort_by(|a, b| self[a].cmp(&self[b]));
+        selection.sort_by(|a, b| self[a].1.cmp(&self[b].1));
     }
 
     /// Takes a selection and mates the genomes indexed by `mates`.
@@ -219,17 +235,14 @@ impl<G: Genome + Default> GenomePool<G> {
         assert!(!mates.is_empty());
         assert!(!replace.is_empty());
 
-        let old_tag = self.get_tag();
-        self.generation += 1;
-
         // Generate offspring.
         let mut children = Vec::with_capacity(replace.len());
         for mate_idx in 0..mates.len() {
             let mate1_ref = &mates[mate_idx];
-            let mate1 = &self[mate1_ref];
+            let mate1 = &self[mate1_ref].1;
             // Avoid mating same 2 genomes twice.
             for mate2_ref in mates.iter().skip(mate_idx + 1) {
-                let mate2 = &self[mate2_ref];
+                let mate2 = &self[mate2_ref].1;
                 children.extend(mate1.crossover(mate2, self.mut_prob));
                 if children.len() >= replace.len() {
                     break;
@@ -243,9 +256,8 @@ impl<G: Genome + Default> GenomePool<G> {
         // Replace all genomes from `replace` with ones from `children`, until either we exhausted
         // `children` or `replace`.
         for replace_ref in replace {
-            assert_eq!(old_tag, replace_ref.0);
             if let Some(child) = children.pop() {
-                self.population[replace_ref.1] = (self.generation + 1, child);
+                self[replace_ref] = (self.generation + 1, child);
             } else {
                 break;
             }
@@ -253,6 +265,7 @@ impl<G: Genome + Default> GenomePool<G> {
 
         // GenomePool size should remain constant.
         assert_eq!(self.population.len(), self.target_len);
+        self.generation += 1;
     }
 
     #[inline(always)]
@@ -263,18 +276,18 @@ impl<G: Genome + Default> GenomePool<G> {
 }
 
 impl<G: Genome + Default> Index<&GenomeRef> for GenomePool<G> {
-    type Output = G;
+    type Output = (u64, G);
 
     fn index(&self, idx: &GenomeRef) -> &Self::Output {
-        assert_eq!(self.get_tag(), idx.0);
-        &self.population[idx.1].1
+        assert_eq!(self.get_tag(), idx.0, "use-after-step");
+        &self.population[idx.1]
     }
 }
 
 impl<G: Genome + Default> IndexMut<&GenomeRef> for GenomePool<G> {
     fn index_mut(&mut self, idx: &GenomeRef) -> &mut Self::Output {
-        assert_eq!(self.get_tag(), idx.0);
-        &mut self.population[idx.1].1
+        assert_eq!(self.get_tag(), idx.0, "use-after-step");
+        &mut self.population[idx.1]
     }
 }
 
@@ -283,28 +296,112 @@ mod tests {
     use super::*;
 
     struct AddGenome {
-        pub vals: Vec<f32>,
+        pub genome: Vec<f32>,
+    }
+
+    impl From<Vec<f32>> for AddGenome {
+        fn from(v: Vec<f32>) -> Self {
+            Self { genome: v }
+        }
+    }
+
+    impl From<&AddGenome> for Vec<f32> {
+        fn from(g: &AddGenome) -> Self {
+            g.genome.clone()
+        }
     }
 
     impl Default for AddGenome {
         fn default() -> Self {
+            Self {
+                genome: vec![0.0; 5],
+            }
         }
     }
 
     impl Genome for AddGenome {
-        fn with_blueprint(self, blueprint: &Self) -> Self {
+        fn with_blueprint(mut self, _blueprint: &Self) -> Self {
+            self.mutate(1.0);
             self
         }
 
-        fn mutate(&mut self, mut_prob: f32) {}
+        fn mutate(&mut self, mut_prob: f32) {
+            let mut rng = rand::thread_rng();
+            let mut used = HashSet::new();
+            let mut selection_count = (self.genome.len() as f32 * mut_prob) as usize;
+            while selection_count != 0 {
+                let idx = rng.gen_range(0..self.genome.len());
+                if used.insert(idx) {
+                    self.genome[idx] += rng.gen_range(-2.0..2.0);
+                }
+                selection_count -= 1;
+            }
+        }
 
-        fn fitness(&self) -> f32 {}
+        fn fitness(&self) -> f32 {
+            if self.genome.len() > 10 {
+                // Cap size.
+                return -999.0;
+            }
 
-        fn crossover(&self, other: &Self, mut_prob: f32) -> Vec<Self> {}
+            let sum: f32 = self.genome.iter().sum();
+            // Sum should be close to 42
+            -((42.0 - sum).abs())
+        }
+
+        fn crossover(&self, other: &Self, mut_prob: f32) -> Vec<Self> {
+            super::default_crossover(self, other, mut_prob, true, false, |len| {
+                rand::thread_rng().gen_range(0..len)
+            })
+        }
 
         fn is_eval(&self) -> bool {
             true
         }
+    }
+
+    #[test]
+    fn evolve_add_42() {
+        let tournament_size = 10;
+        let tournament_winners = 5;
+        let mut pool = GenomePool::new(AddGenome::default(), 25, 0.3);
+        for generation in 0..50 {
+            assert_eq!(pool.generation(), generation);
+            // Assert that new genomes are added.
+            let mut found_new = false;
+            for g_ref in pool.select_all() {
+                assert!(pool[&g_ref].0 <= generation);
+                if pool[&g_ref].0 == generation {
+                    found_new = true;
+                }
+            }
+            assert!(found_new);
+            // Advance generation.
+            let mut selection = pool.select_uniform(tournament_size);
+            pool.sort_selection(&mut selection);
+            let mates = &selection[0..tournament_winners];
+            let elite = &selection[tournament_winners..];
+            assert_eq!(mates.len(), 5);
+            assert_eq!(elite.len(), 5);
+            pool.step(mates, elite);
+            // There should be progress.
+            assert!(pool.best_fitness() > pool.mean_fitness());
+            assert!(pool.mean_fitness() > pool.worst_fitness());
+            assert!(pool[&pool.select_oldest()].0 < pool.generation());
+        }
+        // Check we produced some fit offspring.
+        let best = pool.select_best();
+        assert_eq!(pool.best_fitness(), pool[&best].1.fitness());
+        assert_ne!(pool.worst_fitness(), pool[&best].1.fitness());
+        assert_ne!(pool.mean_fitness(), pool[&best].1.fitness());
+        assert_ne!(pool[&best].0, 0);
+        assert!(pool[&best].1.genome.len() <= 10);
+        let best_sum: f32 = pool[&best].1.genome.iter().sum();
+        assert!(
+            best_sum >= 41.1 && best_sum <= 42.9,
+            "failed to reach target - currently: {}",
+            best_sum
+        );
     }
 
     #[test]
