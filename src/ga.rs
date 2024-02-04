@@ -39,7 +39,7 @@ pub fn default_crossover<'a, G, T, F>(
     mut_prob: f32,
     siblings: bool,
     onepoint: bool,
-    mut rand_idx: F,
+    rand_idx: &mut F,
 ) -> Vec<G>
 where
     G: Genome + From<Vec<T>>,
@@ -95,11 +95,11 @@ pub struct GenomePool<G> {
 
 /// Reference to a Genome in a GenomePool. It effectively implements a fat pointer: a tag (unique
 /// to GenomePool instance and the current generation) and the index into `population`.
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct GenomeRef(usize, usize);
 
 impl<G: Genome + Default> GenomePool<G> {
     pub fn new(blueprint: G, target_len: usize, mut_prob: f32) -> Self {
-        // Mutation rate is a percentage.
         assert!(mut_prob >= 0.0);
         assert!(mut_prob <= 1.0);
         assert_ne!(target_len, 0);
@@ -295,13 +295,15 @@ impl<G: Genome + Default> IndexMut<&GenomeRef> for GenomePool<G> {
 mod tests {
     use super::*;
 
+    #[derive(Debug, PartialEq)]
     struct AddGenome {
         pub genome: Vec<f32>,
+        pub id: u32,
     }
 
     impl From<Vec<f32>> for AddGenome {
         fn from(v: Vec<f32>) -> Self {
-            Self { genome: v }
+            Self { genome: v, id: 0 }
         }
     }
 
@@ -315,13 +317,18 @@ mod tests {
         fn default() -> Self {
             Self {
                 genome: vec![0.0; 5],
+                id: 999,
             }
         }
     }
 
     impl Genome for AddGenome {
         fn with_blueprint(mut self, _blueprint: &Self) -> Self {
-            self.mutate(1.0);
+            if self.id == 999 {
+                // From default().
+                self.mutate(1.0);
+                self.id = 0
+            }
             self
         }
 
@@ -339,6 +346,7 @@ mod tests {
         }
 
         fn fitness(&self) -> f32 {
+            assert!(!self.genome.is_empty());
             if self.genome.len() > 10 {
                 // Cap size.
                 return -999.0;
@@ -350,7 +358,7 @@ mod tests {
         }
 
         fn crossover(&self, other: &Self, mut_prob: f32) -> Vec<Self> {
-            super::default_crossover(self, other, mut_prob, true, false, |len| {
+            super::default_crossover(self, other, mut_prob, true, false, &mut |len| {
                 rand::thread_rng().gen_range(0..len)
             })
         }
@@ -365,7 +373,7 @@ mod tests {
         let tournament_size = 10;
         let tournament_winners = 5;
         let mut pool = GenomePool::new(AddGenome::default(), 25, 0.3);
-        for generation in 0..50 {
+        for generation in 0..100 {
             assert_eq!(pool.generation(), generation);
             // Assert that new genomes are added.
             let mut found_new = false;
@@ -379,6 +387,10 @@ mod tests {
             // Advance generation.
             let mut selection = pool.select_uniform(tournament_size);
             pool.sort_selection(&mut selection);
+            assert!(
+                pool[selection.first().unwrap()].1.fitness()
+                    > pool[selection.last().unwrap()].1.fitness()
+            );
             let mates = &selection[0..tournament_winners];
             let elite = &selection[tournament_winners..];
             assert_eq!(mates.len(), 5);
@@ -405,8 +417,45 @@ mod tests {
     }
 
     #[test]
-    fn distinct_genome_ref() {}
+    fn distinct_genome_ref_after_step() {
+        let mut pool = GenomePool::new(AddGenome::default(), 2, 1.0).with_population(vec![
+            (0, AddGenome::default()),
+            (
+                0,
+                AddGenome {
+                    id: 42,
+                    ..AddGenome::default()
+                },
+            ),
+        ]);
+        let s1 = pool.select_all();
+        assert_eq!(42, pool[&s1[1]].1.id);
+        pool.step(&s1, &[s1[0]]);
+        let s2 = pool.select_oldest();
+        assert_eq!(42, pool[&s2].1.id);
+        assert_ne!(s2, s1[1]); // reference should be different
+    }
 
     #[test]
-    fn default_crossover() {}
+    fn default_crossover() {
+        let g1 = AddGenome {
+            genome: vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+            id: 1,
+        };
+        let g2 = AddGenome {
+            genome: vec![6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+            id: 2,
+        };
+        let mut cut_idx = 1;
+        let mut get_idx = |_| {
+            cut_idx += 1;
+            cut_idx
+        };
+        let c1 = super::default_crossover(&g1, &g2, 0.0, true, true, &mut get_idx);
+        assert_eq!(c1[0].genome, vec![0.0, 1.0, 8.0, 9.0, 10.0, 11.0]);
+        assert_eq!(c1[1].genome, vec![6.0, 7.0, 2.0, 3.0, 4.0, 5.0]);
+        let c2 = super::default_crossover(&g1, &g2, 0.0, true, false, &mut get_idx);
+        assert_eq!(c2[0].genome, vec![0.0, 1.0, 2.0, 10.0, 11.0]);
+        assert_eq!(c2[1].genome, vec![6.0, 7.0, 8.0, 9.0, 3.0, 4.0, 5.0]);
+    }
 }
