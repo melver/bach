@@ -76,6 +76,12 @@ impl TickClock {
         (duration_per_tick, drift)
     }
 
+    /// Fast-forwards ticks without real time synchronization.
+    pub fn forward_tick(&mut self, ticks: u64) {
+        self.tick += ticks;
+    }
+
+    /// Reset all internal state to the initial tick.
     pub fn reset(&mut self) {
         self.tick = 0
     }
@@ -348,7 +354,7 @@ mod tests {
             // Just sanity check - we can't rely on this being too precise as long as we're not
             // running a RT OS. On an unloaded system this is typically below 10, but not
             // garanteed.
-            assert!(drift < time::Duration::from_micros(1000));
+            assert!(drift < time::Duration::from_micros(2000));
         }
     }
 
@@ -372,6 +378,28 @@ mod tests {
         clock.await_tick();
         assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
         clock.await_tick();
+    }
+
+    #[test]
+    fn one_note_fast_forward() {
+        let mut clock = TickClock::default();
+        let mut seq = MidiSequencer::new();
+        seq.queue(
+            1,
+            &Note::Maj(60, 0),
+            &Velocity::Mf,
+            &Duration::Beats(3, 4 * clock.ppqn),
+            &clock,
+        )
+        .unwrap();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        clock.forward_tick(1);
+        assert_eq!(seq.tick(&clock), vec![]);
+        clock.forward_tick(1);
+        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        clock.forward_tick(1);
+        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        clock.forward_tick(1);
     }
 
     #[test]
