@@ -1,4 +1,4 @@
-// Simple interpreter that reads program from a text file and outputs real-time MIDI to stdout:
+// Simple interpreter that reads program from a text file and outputs real-time MIDI to stdout.
 
 use bach::sequencer::*;
 use bach::units::*;
