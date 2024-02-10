@@ -1,5 +1,5 @@
 /// Duration of a note.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Duration {
     /// Raw ticks of the sequencer.
     Ticks(u64),
@@ -27,7 +27,7 @@ impl From<&str> for Duration {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Note {
     /// Raw MIDI note.
     Raw(u8),
@@ -87,7 +87,7 @@ impl From<&Note> for Result<u8, &'static str> {
 }
 
 /// Common note velocities.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Velocity {
     Raw(u8),
     None,
