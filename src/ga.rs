@@ -103,11 +103,9 @@ impl<G: Genome + Default> GenomePool<G> {
         assert!(mut_prob >= 0.0);
         assert!(mut_prob <= 1.0);
         assert_ne!(target_len, 0);
-        let mut init_population: Vec<(u64, G)> = (0..target_len - 1)
+        let init_population: Vec<(u64, G)> = (0..target_len)
             .map(|_| (0, G::default().with_blueprint(&blueprint)))
             .collect();
-        // Don't let the blueprint go to waste.
-        init_population.push((0, blueprint));
         Self {
             mut_prob,
             generation: 0,
@@ -335,13 +333,13 @@ mod tests {
         fn mutate(&mut self, mut_prob: f32) {
             let mut rng = rand::thread_rng();
             let mut used = HashSet::new();
-            let mut selection_count = (self.genome.len() as f32 * mut_prob) as usize;
-            while selection_count != 0 {
+            let mut to_mutate = (self.genome.len() as f32 * mut_prob) as usize;
+            while to_mutate != 0 {
                 let idx = rng.gen_range(0..self.genome.len());
                 if used.insert(idx) {
                     self.genome[idx] += rng.gen_range(-2.0..2.0);
+                    to_mutate -= 1;
                 }
-                selection_count -= 1;
             }
         }
 
