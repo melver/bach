@@ -5,6 +5,7 @@ use rand::{rngs::ThreadRng, Rng};
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 enum SeqCommand {
@@ -13,11 +14,11 @@ enum SeqCommand {
     Advance(Duration),
 }
 
-#[derive(Debug)]
 struct Song {
     pub cmds: Vec<SeqCommand>,
     pub init: bool,
     pub fitness: Option<f32>,
+    pub map_note: Option<Rc<dyn Fn(i8) -> Note>>,
 }
 
 impl From<Vec<SeqCommand>> for Song {
@@ -26,6 +27,7 @@ impl From<Vec<SeqCommand>> for Song {
             cmds: v,
             init: true,
             fitness: None,
+            map_note: None,
         }
     }
 }
@@ -42,54 +44,73 @@ impl Default for Song {
             cmds: vec![SeqCommand::Nop; 32],
             init: false,
             fitness: None,
+            map_note: None,
         }
     }
 }
 
-fn gen_chan(rng: &mut ThreadRng) -> u8 {
-    // TODO: weights
-    rng.gen_range(0..9)
-}
-
-fn gen_note(rng: &mut ThreadRng) -> Note {
-    Note::Raw(rng.gen_range(0..=127))
-}
-
-fn gen_velocity(rng: &mut ThreadRng) -> Velocity {
-    // TODO: weights
-    Velocity::Raw(rng.gen_range(1..=127))
-}
-
-fn gen_duration(rng: &mut ThreadRng) -> Duration {
-    // TODO: weights
-    match rng.gen_range(0..=2) {
-        0 => Duration::Begin,
-        1 => Duration::End,
-        2 => {
-            let beats_per_bar = 1 << rng.gen_range(0..=5); // up to 32
-            Duration::Beats(rng.gen_range(1..=(beats_per_bar * 2)), beats_per_bar)
-        }
-        _ => unreachable!(),
+impl Song {
+    fn with_map_note(mut self, map_note: Rc<dyn Fn(i8) -> Note>) -> Self {
+        self.map_note = Some(map_note);
+        self
     }
-}
 
-fn gen_cmd(rng: &mut ThreadRng) -> SeqCommand {
-    // TODO: weights
-    match rng.gen_range(0..=2) {
-        0 => SeqCommand::Nop,
-        1 => SeqCommand::QueueNote(
-            gen_chan(rng),
-            gen_note(rng),
-            gen_velocity(rng),
-            gen_duration(rng),
-        ),
-        2 => SeqCommand::Advance(Duration::Beats(rng.gen_range(1..=32), 32)),
-        _ => unreachable!(),
+    fn gen_chan(&self, rng: &mut ThreadRng) -> u8 {
+        // TODO: weights
+        rng.gen_range(0..9)
+    }
+
+    fn gen_note(&self, rng: &mut ThreadRng) -> Note {
+        let note = (self.map_note.as_ref().unwrap())(rng.gen_range(-30..30));
+        // Detect invalid notes early.
+        assert!(Result::from(&note).is_ok(), "try a different scale");
+        note
+    }
+
+    fn gen_velocity(&self, rng: &mut ThreadRng) -> Velocity {
+        match rng.gen_range(0..=100) {
+            0 => Velocity::Pppp,
+            1..=9 => Velocity::Ppp,
+            10..=19 => Velocity::Pp,
+            20..=29 => Velocity::P,
+            30..=39 => Velocity::Mp,
+            40..=69 => Velocity::Mf,
+            70..=79 => Velocity::F,
+            80..=89 => Velocity::Ff,
+            90..=99 => Velocity::Fff,
+            100 => Velocity::Ffff,
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_duration(&self, rng: &mut ThreadRng) -> Duration {
+        match rng.gen_range(0..=100) {
+            0..=9 => Duration::Begin,
+            10..=19 => Duration::End,
+            20..=100 => Duration::Beats(1 << rng.gen_range(0..=5), 16),
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
+        match rng.gen_range(0..=100) {
+            0..=5 => SeqCommand::Nop,
+            6..=59 => SeqCommand::QueueNote(
+                self.gen_chan(rng),
+                self.gen_note(rng),
+                self.gen_velocity(rng),
+                self.gen_duration(rng),
+            ),
+            60..=100 => SeqCommand::Advance(Duration::Beats(1 << rng.gen_range(0..=3), 16)),
+            _ => unreachable!(),
+        }
     }
 }
 
 impl Genome for Song {
-    fn with_blueprint(mut self, _blueprint: &Self) -> Self {
+    fn with_blueprint(mut self, blueprint: &Self) -> Self {
+        // Idempotent writes.
+        self.map_note = blueprint.map_note.clone();
         if !self.init {
             // From default().
             self.mutate(1.0);
@@ -109,22 +130,25 @@ impl Genome for Song {
             }
 
             self.cmds[idx] = match self.cmds[idx] {
-                SeqCommand::Nop => gen_cmd(&mut rng),
+                SeqCommand::Nop | SeqCommand::Advance(_) => self.gen_cmd(&mut rng),
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
                     match rng.gen_range(0..=4) {
-                        0 => SeqCommand::QueueNote(gen_chan(&mut rng), note, velocity, duration),
-                        1 => SeqCommand::QueueNote(chan, gen_note(&mut rng), velocity, duration),
-                        2 => SeqCommand::QueueNote(chan, note, gen_velocity(&mut rng), duration),
-                        3 => SeqCommand::QueueNote(chan, note, velocity, gen_duration(&mut rng)),
+                        0 => {
+                            SeqCommand::QueueNote(self.gen_chan(&mut rng), note, velocity, duration)
+                        }
+                        1 => {
+                            SeqCommand::QueueNote(chan, self.gen_note(&mut rng), velocity, duration)
+                        }
+                        2 => {
+                            SeqCommand::QueueNote(chan, note, self.gen_velocity(&mut rng), duration)
+                        }
+                        3 => {
+                            SeqCommand::QueueNote(chan, note, velocity, self.gen_duration(&mut rng))
+                        }
                         4 => SeqCommand::Nop,
                         _ => unreachable!(),
                     }
                 }
-                SeqCommand::Advance(_) => match rng.gen_range(0..=1) {
-                    0 => SeqCommand::Advance(gen_duration(&mut rng)),
-                    1 => SeqCommand::Nop,
-                    _ => unreachable!(),
-                },
             };
 
             to_mutate -= 1;
@@ -165,17 +189,23 @@ fn main() {
         .expect("must provide PPQN")
         .parse()
         .expect("not a valid integer");
+    let scale = std::env::args().nth(3).expect("must provide scale");
     let midi_path = std::env::args()
-        .nth(3)
+        .nth(4)
         .expect("must provide MIDI output device");
+
+    let map_note: Rc<dyn Fn(i8) -> Note> = match scale.as_str().into() {
+        Note::Raw(_) => Rc::new(|n| Note::Raw(n as u8)),
+        Note::Maj(k, _) => Rc::new(move |n| Note::Maj(k, n)),
+    };
 
     let mut midi_file = OpenOptions::new().write(true).open(midi_path).unwrap();
     let mut clock = sequencer::TickClock::new(bpm, ppqn);
     let mut seq = sequencer::MidiSequencer::new();
-    let mut pool = ga::GenomePool::new(Song::default(), 30, 0.02);
+    let mut pool = ga::GenomePool::new(Song::default().with_map_note(map_note), 30, 0.02);
 
     // TODO: change this
-    let tournamet_size = 4;
+    let tournament_size = 4;
     let tournament_winners = 2;
 
     loop {
@@ -183,14 +213,14 @@ fn main() {
             break;
         }
 
-        let mut selection = pool.select_uniform(tournamet_size);
+        let mut selection = pool.select_uniform(tournament_size);
         for song_ref in &selection {
             let song = &mut pool[song_ref];
             if song.1.is_eval() {
                 println!("already evald: {}", song.1.fitness.unwrap());
                 continue;
             }
-            println!("{:?}", song);
+            println!("gen: {}, cmds: {:?}", song.0, song.1.cmds);
             let mut err = false;
             for seq_cmd in &song.1.cmds {
                 println!("{:?}", seq_cmd);
@@ -222,10 +252,10 @@ fn main() {
             }
             midi_file.write_all(&seq.stop()).unwrap();
             clock.reset();
+            let song_fitness = prompt_user("fitness>").parse().unwrap();
             if err {
-                song.1.fitness = Some(-999.0);
+                song.1.fitness = Some(song_fitness / 2.0);
             } else {
-                let song_fitness = prompt_user("fitness>").parse().unwrap();
                 song.1.fitness = Some(song_fitness);
             }
         }
