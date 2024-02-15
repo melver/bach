@@ -371,7 +371,7 @@ mod tests {
         let tournament_size = 10;
         let tournament_winners = 5;
         let mut pool = GenomePool::new(AddGenome::default(), 25, 0.3);
-        for generation in 0..100 {
+        for generation in 0..200 {
             assert_eq!(pool.generation(), generation);
             // Assert that new genomes are added.
             let mut found_new = false;

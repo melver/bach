@@ -2,10 +2,45 @@ use crate::midi::*;
 use crate::units::*;
 use crate::vm::*;
 use std::cell::RefCell;
+use std::cmp;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::{thread, time};
+
+/// Compute the Euclidean Sequence with `pulses`, for the given `len` and `offset`. Also see:
+/// https://cgm.cs.mcgill.ca/~godfried/publications/banff.pdf
+pub fn euclidean_sequence(pulses: u32, len: u32, offset: u32) -> Vec<bool> {
+    assert!(pulses <= len);
+    assert!(len == 0 || offset < len);
+
+    let mut sequence: Vec<Vec<bool>> = (0..len)
+        .map(|i| if i < pulses { vec![true] } else { vec![false] })
+        .collect();
+
+    let mut d = (len - pulses) as isize;
+    let mut n = cmp::max(pulses as isize, d);
+    let mut k = cmp::min(pulses as isize, d);
+    let mut z = d;
+
+    while z > 0 || k > 1 {
+        for i in 0..(k as usize) {
+            let mut extension = sequence[sequence.len() - 1 - i].clone();
+            sequence[i].append(&mut extension);
+        }
+        sequence.truncate(sequence.len() - (k as usize));
+        z -= k;
+        d = n - k;
+        n = cmp::max(k, d);
+        k = cmp::min(k, d);
+    }
+
+    let mut cyclic = sequence.into_iter().flatten().cycle();
+    for _ in 0..offset {
+        cyclic.next();
+    }
+    cyclic.take(len as usize).collect()
+}
 
 /// Synchronizes ticks to desired BPM.
 pub struct TickClock {
@@ -105,8 +140,10 @@ pub struct MidiSequencer {
     pub tick: u64,
     /// Map of tick to queued commands.
     queue: HashMap<u64, Vec<u8>>,
-    /// Map of playing notes (channel, note) and their time end tick.
-    playing: HashMap<(u8, u8), u64>,
+    /// Map of allocated notes (channel, note) and their expiration tick. This is to avoid
+    /// accidentally attempting to concurrently play the same note; a note may already be stopped
+    /// but still be allocated, e.g. when part of a sequence that has not yet completed.
+    allocated: HashMap<(u8, u8), u64>,
 }
 
 impl MidiSequencer {
@@ -114,7 +151,7 @@ impl MidiSequencer {
         Self {
             tick: 0,
             queue: HashMap::new(),
-            playing: HashMap::new(),
+            allocated: HashMap::new(),
         }
     }
 
@@ -146,6 +183,7 @@ impl MidiSequencer {
         note: u8,
         on_velocity: u8,
         off_velocity: u8,
+        begin_tick: u64,
         ticks: Option<u64>,
     ) -> Result<(), &'static str> {
         if channel > 15 {
@@ -161,31 +199,32 @@ impl MidiSequencer {
             return Err("invalid velocity");
         }
 
-        if let Some(end_tick) = self.playing.get(&(channel, note)) {
-            if self.tick < *end_tick {
+        if let Some(expiration) = self.allocated.get(&(channel, note)) {
+            if begin_tick < *expiration {
                 match ticks {
                     Some(0) => {
-                        if *end_tick != u64::MAX {
+                        if *expiration != u64::MAX {
                             return Err("cannot stop limited note");
                         }
                     }
+                    // We can't start a note that has not yet expired.
                     Some(_) | None => {
-                        return Err("already playing");
+                        return Err("already allocated note");
                     }
                 }
             }
         }
 
         let end_tick = match ticks {
-            Some(t) => self.tick + t,
+            Some(t) => begin_tick + t,
             None => u64::MAX,
         };
 
-        if end_tick != self.tick {
+        if end_tick != begin_tick {
             // If this note does not stop on this tick, start playing.
             let on_cmd = MidiMsg::NoteOn(channel, note, on_velocity);
             self.queue
-                .entry(self.tick)
+                .entry(begin_tick)
                 .or_default()
                 .append(&mut on_cmd.into());
         }
@@ -199,7 +238,7 @@ impl MidiSequencer {
                 .append(&mut off_cmd.into());
         }
 
-        self.playing.insert((channel, note), end_tick);
+        self.allocated.insert((channel, note), end_tick);
 
         Ok(())
     }
@@ -207,26 +246,52 @@ impl MidiSequencer {
     /// Queue a typed note description as MIDI messages.
     pub fn queue(
         &mut self,
+        tick_clock: &TickClock,
         channel: u8,
         note: &Note,
         velocity: &Velocity,
         duration: &Duration,
-        tick_clock: &TickClock,
     ) -> Result<(), &'static str> {
-        let raw_note: Result<u8, &'static str> = note.into();
-        let on_velocity = velocity.into();
+        let midi_note = Result::from(note)?;
+        let velocity = velocity.into();
         let off_velocity = if let Duration::End = duration {
-            on_velocity
+            velocity
         } else {
             0
         };
-        self.queue_raw(
-            channel,
-            raw_note?,
-            on_velocity,
-            off_velocity,
-            tick_clock.into_ticks(duration),
-        )
+        let ticks = tick_clock.into_ticks(duration);
+        self.queue_raw(channel, midi_note, velocity, off_velocity, self.tick, ticks)
+    }
+
+    /// Queue typed notes based on a rhythmic sequence. Each element in `sequence` maps to the
+    /// corresponding element in `notes`, where the latter simply repeats if exhausted.
+    pub fn queue_sequence(
+        &mut self,
+        tick_clock: &TickClock,
+        channel: u8,
+        notes: &[Note],
+        velocity: &Velocity,
+        unit_duration: &Duration,
+        sequence: &[bool],
+    ) -> Result<(), &'static str> {
+        let velocity = velocity.into();
+        let unit_ticks = tick_clock
+            .into_ticks(unit_duration)
+            .expect("requires finite duration");
+        assert!(unit_ticks != 0, "cannot be 0");
+
+        let mut notes_stream = notes.iter().cycle();
+        let mut cur_tick = self.tick;
+        for &pulse in sequence {
+            if pulse {
+                let note = notes_stream.next().unwrap();
+                let midi_note = Result::from(note)?;
+                self.queue_raw(channel, midi_note, velocity, 0, cur_tick, Some(unit_ticks))?;
+            }
+            cur_tick += unit_ticks;
+        }
+
+        Ok(())
     }
 
     #[must_use]
@@ -234,7 +299,7 @@ impl MidiSequencer {
         let mut stop_msgs = vec![];
 
         // Note: Beware non-stable iteration order.
-        for ((chan, note), end_tick) in self.playing.drain() {
+        for ((chan, note), end_tick) in self.allocated.drain() {
             if self.tick <= end_tick {
                 let off_cmd = MidiMsg::NoteOff(chan, note, 0);
                 stop_msgs.append(&mut off_cmd.into());
@@ -297,7 +362,7 @@ impl InstExtension for SeqInst {
                     };
                     let mut seq = vmstate.seq.borrow_mut();
                     let clock = vmstate.clock.borrow();
-                    seq.queue(chan, &note, &velocity, &duration, &clock)
+                    seq.queue(&clock, chan, &note, &velocity, &duration)
                         .map(|_| 1)
                 }
             }
@@ -329,6 +394,33 @@ impl SeqInst {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_euclidean_sequences() {
+        let euclidean_seq = |k, n, o| -> Vec<u8> {
+            euclidean_sequence(k, n, o)
+                .iter()
+                .map(|b| if *b { 1 } else { 0 })
+                .collect()
+        };
+        assert_eq!(euclidean_seq(0, 0, 0), vec![]);
+        assert_eq!(euclidean_seq(1, 2, 0), vec![1, 0]);
+        assert_eq!(euclidean_seq(2, 4, 0), vec![1, 0, 1, 0]);
+        assert_eq!(euclidean_seq(2, 5, 3), vec![1, 0, 1, 0, 0]);
+        assert_eq!(euclidean_seq(3, 3, 0), vec![1, 1, 1]);
+        assert_eq!(euclidean_seq(3, 5, 0), vec![1, 0, 1, 0, 1]);
+        assert_eq!(euclidean_seq(5, 6, 0), vec![1, 0, 1, 1, 1, 1]);
+        assert_eq!(euclidean_seq(5, 8, 0), vec![1, 0, 1, 1, 0, 1, 1, 0]);
+        assert_eq!(euclidean_seq(5, 8, 1), vec![0, 1, 1, 0, 1, 1, 0, 1]);
+        assert_eq!(
+            euclidean_seq(5, 13, 0),
+            vec![1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0]
+        );
+        assert_eq!(
+            euclidean_seq(7, 12, 0),
+            vec![1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0]
+        );
+    }
 
     #[test]
     fn tick_clock() {
@@ -363,11 +455,11 @@ mod tests {
         let mut clock = TickClock::default();
         let mut seq = MidiSequencer::new();
         seq.queue(
+            &clock,
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
             &Duration::Beats(3, 4 * clock.ppqn),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
@@ -385,11 +477,11 @@ mod tests {
         let mut clock = TickClock::default();
         let mut seq = MidiSequencer::new();
         seq.queue(
+            &clock,
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
             &Duration::Beats(3, 4 * clock.ppqn),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
@@ -407,29 +499,29 @@ mod tests {
         let mut clock = TickClock::default();
         let mut seq = MidiSequencer::new();
         seq.queue(
+            &clock,
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
             &Duration::Beats(1, clock.ppqn),
-            &clock,
         )
         .unwrap();
         seq.queue(
+            &clock,
             1,
             &Note::Maj(60, 1),
             &Velocity::Mf,
             &Duration::Beats(1, clock.ppqn),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64, 0x91, 62, 64]);
         clock.await_tick();
         seq.queue(
+            &clock,
             1,
             &Note::Maj(60, 2),
             &Velocity::Mf,
             &Duration::Beats(1, 4 * clock.ppqn),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0x91, 64, 64]);
@@ -443,52 +535,81 @@ mod tests {
     }
 
     #[test]
+    fn queue_sequence() {
+        let mut clock = TickClock::default();
+        let mut seq = MidiSequencer::new();
+        seq.queue_sequence(
+            &clock,
+            1,
+            &[Note::Maj(60, 0), Note::Maj(60, 1), Note::Maj(60, 2)],
+            &Velocity::Mf,
+            &Duration::Beats(1, 4 * clock.ppqn),
+            &[true, false, true, true, false, true],
+        )
+        .unwrap();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 62, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0x81, 62, 0, 0x91, 64, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 64, 0]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0x91, 60, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 60, 0]);
+        clock.await_tick();
+    }
+
+    #[test]
     fn already_queueing_note() {
         let mut clock = TickClock::default();
         let mut seq = MidiSequencer::new();
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(100),
             &Duration::Ticks(2),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100]);
         clock.await_tick();
         // Different channel is ok.
         seq.queue(
+            &clock,
             1,
             &Note::Raw(60),
             &Velocity::Raw(100),
             &Duration::Ticks(10),
-            &clock,
         )
         .unwrap();
         assert!(seq
             .queue(
+                &clock,
                 0,
                 &Note::Raw(60),
                 &Velocity::Raw(100),
                 &Duration::Ticks(2),
-                &clock
             )
             .is_err());
         let _ = seq.tick(&clock);
         clock.await_tick();
         // Play on same tick as we are turning it off.
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(101),
             &Duration::Ticks(2),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0, 0x90, 60, 101]);
         // Trying to cancel a limited note does not work.
         assert!(seq
-            .queue(1, &Note::Raw(60), &Velocity::None, &Duration::End, &clock)
+            .queue(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
             .is_err());
     }
 
@@ -499,25 +620,25 @@ mod tests {
 
         // Starting and immediately stopping is ok.
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(100),
             &Duration::Begin,
-            &clock,
         )
         .unwrap();
-        seq.queue(0, &Note::Raw(60), &Velocity::Raw(3), &Duration::End, &clock)
+        seq.queue(&clock, 0, &Note::Raw(60), &Velocity::Raw(3), &Duration::End)
             .unwrap();
 
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100, 0x80, 60, 3]);
         clock.await_tick();
 
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(101),
             &Duration::Begin,
-            &clock,
         )
         .unwrap();
 
@@ -527,15 +648,15 @@ mod tests {
         // Restarting already playing note doesn't make sense.
         assert!(seq
             .queue(
+                &clock,
                 0,
                 &Note::Raw(60),
                 &Velocity::Raw(101),
                 &Duration::Begin,
-                &clock
             )
             .is_err());
         // We can stop it now.
-        seq.queue(0, &Note::Raw(60), &Velocity::None, &Duration::End, &clock)
+        seq.queue(&clock, 0, &Note::Raw(60), &Velocity::None, &Duration::End)
             .unwrap();
 
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0]);
@@ -548,11 +669,11 @@ mod tests {
         let mut seq = MidiSequencer::new();
 
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(100),
             &Duration::Ticks(1),
-            &clock,
         )
         .unwrap();
 
@@ -568,19 +689,19 @@ mod tests {
 
         // Restart
         seq.queue(
+            &clock,
             0,
             &Note::Raw(60),
             &Velocity::Raw(99),
             &Duration::Ticks(10),
-            &clock,
         )
         .unwrap();
         seq.queue(
+            &clock,
             3,
             &Note::Raw(61),
             &Velocity::Raw(98),
             &Duration::Ticks(1),
-            &clock,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 99, 0x93, 61, 98]);

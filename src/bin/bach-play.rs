@@ -50,7 +50,7 @@ fn main() {
             let velocity: Velocity = parts[2].into();
             let duration: Duration = parts[3].into();
 
-            seq.queue(chan, &note, &velocity, &duration, &clock)
+            seq.queue(&clock, chan, &note, &velocity, &duration)
                 .unwrap();
         }
     }

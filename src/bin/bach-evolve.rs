@@ -227,7 +227,7 @@ fn main() {
                 match seq_cmd {
                     SeqCommand::Nop => {}
                     SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                        match seq.queue(*chan, note, velocity, duration, &clock) {
+                        match seq.queue(&clock, *chan, note, velocity, duration) {
                             Ok(()) => {}
                             Err(e) => {
                                 println!("err: {}", e);
