@@ -185,6 +185,7 @@ impl MidiSequencer {
         off_velocity: u8,
         begin_tick: u64,
         ticks: Option<u64>,
+        skip_allocated: bool,
     ) -> Result<(), &'static str> {
         if channel > 15 {
             return Err("invalid channel");
@@ -209,7 +210,11 @@ impl MidiSequencer {
                     }
                     // We can't start a note that has not yet expired.
                     Some(_) | None => {
-                        return Err("already allocated note");
+                        if skip_allocated {
+                            return Ok(());
+                        } else {
+                            return Err("already allocated note");
+                        }
                     }
                 }
             }
@@ -260,7 +265,15 @@ impl MidiSequencer {
             0
         };
         let ticks = tick_clock.into_ticks(duration);
-        self.queue_raw(channel, midi_note, velocity, off_velocity, self.tick, ticks)
+        self.queue_raw(
+            channel,
+            midi_note,
+            velocity,
+            off_velocity,
+            self.tick,
+            ticks,
+            false,
+        )
     }
 
     /// Queue typed notes based on a rhythmic sequence. Each element in `sequence` maps to the
@@ -273,12 +286,13 @@ impl MidiSequencer {
         velocity: &Velocity,
         unit_duration: &Duration,
         sequence: &[bool],
+        skip_allocated: bool,
     ) -> Result<(), &'static str> {
         let velocity = velocity.into();
         let unit_ticks = tick_clock
             .into_ticks(unit_duration)
             .expect("requires finite duration");
-        assert!(unit_ticks != 0, "cannot be 0");
+        assert!(unit_ticks != 0, "ticks cannot be 0");
 
         let mut notes_stream = notes.iter().cycle();
         let mut cur_tick = self.tick;
@@ -286,7 +300,15 @@ impl MidiSequencer {
             if pulse {
                 let note = notes_stream.next().unwrap();
                 let midi_note = Result::from(note)?;
-                self.queue_raw(channel, midi_note, velocity, 0, cur_tick, Some(unit_ticks))?;
+                self.queue_raw(
+                    channel,
+                    midi_note,
+                    velocity,
+                    0,
+                    cur_tick,
+                    Some(unit_ticks),
+                    skip_allocated,
+                )?;
             }
             cur_tick += unit_ticks;
         }
@@ -545,6 +567,7 @@ mod tests {
             &Velocity::Mf,
             &Duration::Beats(1, 4 * clock.ppqn),
             &[true, false, true, true, false, true],
+            false,
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
