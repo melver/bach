@@ -11,6 +11,7 @@ use std::io::{self, BufRead, Write};
 
 #[derive(Debug)]
 struct Config {
+    channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Note,
     song_init_len: usize,
@@ -31,6 +32,9 @@ impl Config {
         for line in io::BufReader::new(file).lines().flatten() {
             if line.starts_with('#') {
                 continue;
+            } else if let Some(suffix) = line.strip_prefix("channels ") {
+                let parts: Vec<&str> = suffix.split('-').collect();
+                self.channels = (parts[0].parse().unwrap(), parts[1].parse().unwrap());
             } else if let Some(suffix) = line.strip_prefix("beats_per_bar ") {
                 self.beats_per_bar = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
@@ -66,6 +70,7 @@ impl Config {
 }
 
 static mut CONFIG: Config = Config {
+    channels: (0, 3),
     beats_per_bar: 8,
     note_scale: Note::Maj(60, 0),
     song_init_len: 32,
@@ -121,8 +126,8 @@ impl Default for Song {
 }
 
 impl Song {
-    fn gen_chan(&self, rng: &mut ThreadRng) -> u8 {
-        rng.gen_range(0..=3)
+    fn gen_channel(&self, rng: &mut ThreadRng) -> u8 {
+        rng.gen_range(cfg().channels.0..=cfg().channels.1)
     }
 
     fn gen_note(&self, rng: &mut ThreadRng) -> Note {
@@ -196,7 +201,7 @@ impl Song {
         match rng.gen_range(0..=100) {
             0..=4 => SeqCommand::Jmp(rng.gen_range(-15..=5)),
             5..=9 => SeqCommand::QueueNote(
-                self.gen_chan(rng),
+                self.gen_channel(rng),
                 self.gen_note(rng),
                 self.gen_velocity(rng),
                 self.gen_duration(rng, false),
@@ -204,7 +209,7 @@ impl Song {
             10..=42 => {
                 let eucl_params = self.gen_euclidean_params(rng);
                 SeqCommand::QueueSequence(
-                    self.gen_chan(rng),
+                    self.gen_channel(rng),
                     self.gen_note_list(rng),
                     self.gen_velocity(rng),
                     self.gen_duration(rng, true),
