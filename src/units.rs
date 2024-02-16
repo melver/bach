@@ -1,3 +1,7 @@
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
+
+use crate::Result;
+
 /// Duration of a note.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Duration {
@@ -52,13 +56,24 @@ impl From<&str> for Note {
 /// Convert a note (in scale dimension) to octave index and offset into that octave.
 fn get_octave_offset(note: i8) -> (i32, i32) {
     let note_ = note as i32;
-    let octave = if note_ >= 0 { note_ / 7 } else { note_ / 7 - 1 };
+    let octave = if note_ >= 0 {
+        note_ / 7
+    } else {
+        (note_ + 1) / 7 - 1
+    };
     let offset = note_ - octave * 7;
+    assert!(
+        offset >= 0 && offset < 7,
+        "note={}, octave={}, offset={}",
+        note,
+        octave,
+        offset
+    );
     (octave, offset)
 }
 
 /// Convert a Note to raw MIDI note.
-impl From<&Note> for Result<u8, &'static str> {
+impl From<&Note> for Result<u8> {
     fn from(note: &Note) -> Self {
         let ret: i32 = match *note {
             Note::Raw(note) => note as i32,
@@ -66,7 +81,7 @@ impl From<&Note> for Result<u8, &'static str> {
                 let (octave, offset) = get_octave_offset(note);
                 (key as i32)
                     + octave * 12
-                    + match offset % 7 {
+                    + match offset {
                         0 => 0,
                         1 => 2,
                         2 => 4,
@@ -145,13 +160,15 @@ impl From<&str> for Velocity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
 
     #[test]
     fn scales() {
         let assert_note_eq = |note: Note, raw| {
-            let converted: Result<u8, &'static str> = (&note).into();
+            let converted: Result<u8> = (&note).into();
             assert_eq!(converted, Ok(raw));
         };
+        assert_note_eq(Note::Maj(60, -7), 48);
         assert_note_eq(Note::Maj(60, -2), 57);
         assert_note_eq(Note::Maj(60, -1), 59);
 
@@ -168,6 +185,16 @@ mod tests {
         assert_note_eq(Note::Maj(61, 0), 61);
         assert_note_eq(Note::Maj(61, 6), 72);
         assert_note_eq(Note::Maj(61, 7), 73);
+    }
+
+    #[test]
+    fn rand_scales() {
+        let mut rng = rand::thread_rng();
+        for _ in 0..10000 {
+            let converted: Result<u8> =
+                (&Note::Maj(rng.gen_range(55..65), rng.gen_range(-20..=20))).into();
+            assert!(converted.is_ok(), "{:?}", converted);
+        }
     }
 
     #[test]
