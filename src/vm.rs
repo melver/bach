@@ -1,3 +1,6 @@
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
+
+use crate::Result;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
@@ -15,7 +18,7 @@ pub type Mailboxes = Rc<RefCell<HashMap<i32, Op>>>;
 
 pub trait InstExtension {
     /// Returns the jump offset from the current operation.
-    fn eval(&self, stack: &mut Stack, mboxes: &Mailboxes) -> Result<isize, &'static str>;
+    fn eval(&self, stack: &mut Stack, mboxes: &Mailboxes) -> Result<isize>;
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result;
 }
 
@@ -51,7 +54,7 @@ pub enum Inst {
 
 impl Inst {
     /// Returns the jump offset from the current operation.
-    fn eval(&self, stack: &mut Stack, mboxes: &Mailboxes) -> Result<isize, &'static str> {
+    fn eval(&self, stack: &mut Stack, mboxes: &Mailboxes) -> Result<isize> {
         match self {
             Inst::Extension(e) => e.eval(stack, mboxes),
             Inst::Add => {
@@ -327,7 +330,7 @@ impl Core {
     }
 
     /// Return the last error if one occurred during excution.
-    pub fn eval(&mut self, cycles_delta: Option<u64>) -> Result<(), &'static str> {
+    pub fn eval(&mut self, cycles_delta: Option<u64>) -> Result<()> {
         let cycles_limit = match cycles_delta {
             Some(c) => self.cycles + c,
             None => u64::MAX,

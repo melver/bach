@@ -2,6 +2,8 @@
 //
 // Some MIDI references:
 //   https://www.cs.cmu.edu/~music/cmsip/readings/MIDI%20tutorial%20for%20programmers.html
+//
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 pub const CLOCKS_PER_QN: u32 = 24;
 

@@ -1,6 +1,9 @@
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
+
 use crate::midi::*;
 use crate::units::*;
 use crate::vm::*;
+use crate::Result;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
@@ -186,7 +189,7 @@ impl MidiSequencer {
         begin_tick: u64,
         ticks: Option<u64>,
         skip_allocated: bool,
-    ) -> Result<(), &'static str> {
+    ) -> Result<()> {
         if channel > 15 {
             return Err("invalid channel");
         }
@@ -256,7 +259,7 @@ impl MidiSequencer {
         note: &Note,
         velocity: &Velocity,
         duration: &Duration,
-    ) -> Result<(), &'static str> {
+    ) -> Result<()> {
         let midi_note = Result::from(note)?;
         let velocity = velocity.into();
         let off_velocity = if let Duration::End = duration {
@@ -287,7 +290,7 @@ impl MidiSequencer {
         unit_duration: &Duration,
         sequence: &[bool],
         skip_allocated: bool,
-    ) -> Result<(), &'static str> {
+    ) -> Result<()> {
         let velocity = velocity.into();
         let unit_ticks = tick_clock
             .into_ticks(unit_duration)
@@ -353,7 +356,7 @@ pub enum SeqInst {
 }
 
 impl InstExtension for SeqInst {
-    fn eval(&self, stack: &mut Stack, _mboxes: &Mailboxes) -> Result<isize, &'static str> {
+    fn eval(&self, stack: &mut Stack, _mboxes: &Mailboxes) -> Result<isize> {
         match self {
             SeqInst::QueueNote(vmstate) => {
                 if stack.len() < 4 {

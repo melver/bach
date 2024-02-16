@@ -1,3 +1,5 @@
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
+
 use rand::Rng;
 use std::cmp;
 use std::collections::HashSet;
