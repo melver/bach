@@ -252,6 +252,7 @@ impl<G: Genome + Default> GenomePool<G> {
                 break;
             }
         }
+        assert!(children.len() >= replace.len());
 
         // Replace all genomes from `replace` with ones from `children`, until either we exhausted
         // `children` or `replace`.
@@ -392,10 +393,10 @@ mod tests {
                     > pool[selection.last().unwrap()].1.fitness()
             );
             let mates = &selection[0..tournament_winners];
-            let elite = &selection[tournament_winners..];
+            let replace = &selection[tournament_winners..];
             assert_eq!(mates.len(), 5);
-            assert_eq!(elite.len(), 5);
-            pool.step(mates, elite);
+            assert_eq!(replace.len(), 5);
+            pool.step(mates, replace);
             // There should be progress.
             assert!(pool.best_fitness() > pool.mean_fitness());
             assert!(pool.mean_fitness() > pool.worst_fitness());

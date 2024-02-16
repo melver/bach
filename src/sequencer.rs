@@ -38,11 +38,13 @@ pub fn euclidean_sequence(pulses: u32, len: u32, offset: u32) -> Vec<bool> {
         k = cmp::min(k, d);
     }
 
-    let mut cyclic = sequence.into_iter().flatten().cycle();
-    for _ in 0..offset {
-        cyclic.next();
-    }
-    cyclic.take(len as usize).collect()
+    sequence
+        .into_iter()
+        .flatten()
+        .cycle()
+        .skip(offset as usize)
+        .take(len as usize)
+        .collect()
 }
 
 /// Synchronizes ticks to desired BPM.

@@ -5,6 +5,8 @@
 //  ... more notes ...
 //  # advance beats
 //  +<duration>
+//
+// Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 use bach::sequencer;
 use bach::units::*;
