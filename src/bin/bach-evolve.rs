@@ -7,16 +7,78 @@ use rand::{rngs::ThreadRng, Rng};
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Write};
-use std::rc::Rc;
+use std::io::{self, BufRead, Write};
 
-const BEATS_PER_BAR: u32 = 8;
-const BEATS_PER_BAR_ORDER: u32 = 3;
-const SONG_INIT_LEN: usize = 32;
-const POPULATION_SIZE: usize = 12;
-const MUTATION_PROBABILITY: f32 = 0.2;
-const TOURNAMENT_SIZE: usize = 4;
-const TOURNAMENT_WINNERS: usize = 2;
+#[derive(Debug)]
+struct Config {
+    beats_per_bar: u32,
+    note_scale: Note,
+    song_init_len: usize,
+    population_size: usize,
+    mutation_probability: f32,
+    tournament_size: usize,
+    tournament_winners: usize,
+}
+
+impl Config {
+    fn read_from_file(&mut self) {
+        let path = std::env::args().nth(1).expect("must provide config file");
+        if path == "-" {
+            return;
+        }
+
+        let file = fs::File::open(path).unwrap();
+        for line in io::BufReader::new(file).lines().flatten() {
+            if line.starts_with('#') {
+                continue;
+            } else if let Some(suffix) = line.strip_prefix("beats_per_bar ") {
+                self.beats_per_bar = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("note_scale ") {
+                self.note_scale = suffix.into();
+            } else if let Some(suffix) = line.strip_prefix("song_init_len ") {
+                self.song_init_len = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("population_size ") {
+                self.population_size = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("mutation_probability ") {
+                self.mutation_probability = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("tournament_size ") {
+                self.tournament_size = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("tournament_winners ") {
+                self.tournament_winners = suffix.parse().unwrap();
+            } else {
+                panic!("unknown configuration: {}", line);
+            }
+        }
+
+        println!("loaded configuration: {:?}", self);
+    }
+
+    fn beats_per_bar_order(&self) -> u32 {
+        self.beats_per_bar.ilog2()
+    }
+
+    fn map_note(&self, note: i8) -> Note {
+        match cfg().note_scale {
+            Note::Raw(_) => Note::Raw(note as u8),
+            Note::Maj(k, _) => Note::Maj(k, note),
+        }
+    }
+}
+
+static mut CONFIG: Config = Config {
+    beats_per_bar: 8,
+    note_scale: Note::Maj(60, 0),
+    song_init_len: 32,
+    population_size: 12,
+    mutation_probability: 0.2,
+    tournament_size: 4,
+    tournament_winners: 2,
+};
+
+fn cfg() -> &'static Config {
+    // SAFETY: Initialized once at startup.
+    unsafe { &CONFIG }
+}
 
 #[derive(Clone, Debug)]
 enum SeqCommand {
@@ -30,7 +92,6 @@ struct Song {
     pub cmds: Vec<SeqCommand>,
     pub init: bool,
     pub fitness: Option<f32>,
-    pub map_note: Option<Rc<dyn Fn(i8) -> Note>>,
 }
 
 impl From<Vec<SeqCommand>> for Song {
@@ -39,7 +100,6 @@ impl From<Vec<SeqCommand>> for Song {
             cmds: v,
             init: true,
             fitness: None,
-            map_note: None,
         }
     }
 }
@@ -53,20 +113,14 @@ impl From<&Song> for Vec<SeqCommand> {
 impl Default for Song {
     fn default() -> Self {
         Self {
-            cmds: vec![SeqCommand::Jmp(0); SONG_INIT_LEN],
+            cmds: vec![SeqCommand::Jmp(0); cfg().song_init_len],
             init: false,
             fitness: None,
-            map_note: None,
         }
     }
 }
 
 impl Song {
-    fn with_map_note(mut self, map_note: Rc<dyn Fn(i8) -> Note>) -> Self {
-        self.map_note = Some(map_note);
-        self
-    }
-
     fn gen_chan(&self, rng: &mut ThreadRng) -> u8 {
         rng.gen_range(0..=3)
     }
@@ -80,7 +134,7 @@ impl Song {
             let y = rng.gen_range(-1.0..=1.0);
             x * y * 30.9
         } as i8;
-        let note = (self.map_note.as_ref().unwrap())(note_offset);
+        let note = cfg().map_note(note_offset);
         // Detect invalid notes early.
         assert!(Result::from(&note).is_ok(), "try a different scale");
         note
@@ -108,7 +162,10 @@ impl Song {
     }
 
     fn gen_duration(&self, rng: &mut ThreadRng, only_beats: bool) -> Duration {
-        let beats = Duration::Beats(1 << rng.gen_range(0..=BEATS_PER_BAR_ORDER), BEATS_PER_BAR);
+        let beats = Duration::Beats(
+            1 << rng.gen_range(0..=cfg().beats_per_bar_order()),
+            cfg().beats_per_bar,
+        );
         if only_beats {
             beats
         } else {
@@ -163,9 +220,8 @@ impl Song {
 }
 
 impl Genome for Song {
-    fn with_blueprint(mut self, blueprint: &Self) -> Self {
+    fn with_blueprint(mut self, _blueprint: &Self) -> Self {
         // Idempotent writes.
-        self.map_note = blueprint.map_note.clone();
         if !self.init {
             // From default().
             self.mutate(1.0);
@@ -294,33 +350,27 @@ struct Prog {
 impl Prog {
     fn new() -> Self {
         let bpm: u32 = std::env::args()
-            .nth(1)
+            .nth(2)
             .expect("must provide BPM")
             .parse()
             .expect("not a valid integer");
         let ppqn: u32 = std::env::args()
-            .nth(2)
+            .nth(3)
             .expect("must provide PPQN")
             .parse()
             .expect("not a valid integer");
-        let scale = std::env::args().nth(3).expect("must provide scale");
         let midi_path = std::env::args()
             .nth(4)
             .expect("must provide MIDI output device");
-
-        let map_note: Rc<dyn Fn(i8) -> Note> = match scale.as_str().into() {
-            Note::Raw(_) => Rc::new(|n| Note::Raw(n as u8)),
-            Note::Maj(k, _) => Rc::new(move |n| Note::Maj(k, n)),
-        };
 
         Self {
             midi_file: fs::OpenOptions::new().write(true).open(midi_path).unwrap(),
             clock: sequencer::TickClock::new(bpm, ppqn),
             seq: sequencer::MidiSequencer::new(),
             pool: ga::GenomePool::new(
-                Song::default().with_map_note(map_note),
-                POPULATION_SIZE,
-                MUTATION_PROBABILITY,
+                Song::default(),
+                cfg().population_size,
+                cfg().mutation_probability,
             ),
         }
     }
@@ -331,7 +381,7 @@ impl Prog {
                 break;
             }
 
-            let mut selection = self.pool.select_uniform(TOURNAMENT_SIZE);
+            let mut selection = self.pool.select_uniform(cfg().tournament_size);
             for song_ref in &selection {
                 let song = &mut self.pool[song_ref];
                 if song.1.is_eval() {
@@ -409,8 +459,8 @@ impl Prog {
             }
 
             self.pool.sort_selection(&mut selection);
-            let mates = &selection[0..TOURNAMENT_WINNERS];
-            let replace = &selection[TOURNAMENT_WINNERS..];
+            let mates = &selection[0..cfg().tournament_winners];
+            let replace = &selection[cfg().tournament_winners..];
             self.pool.step(mates, replace);
         }
     }
@@ -424,5 +474,8 @@ impl Drop for Prog {
 }
 
 fn main() {
+    unsafe {
+        CONFIG.read_from_file();
+    }
     Prog::new().run()
 }

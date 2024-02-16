@@ -10,7 +10,7 @@
 
 use bach::sequencer;
 use bach::units::*;
-use std::fs::File;
+use std::fs;
 use std::io::{self, BufRead, Write};
 
 fn main() {
@@ -26,7 +26,7 @@ fn main() {
         .expect("not a valid integer");
     let file_name = std::env::args().nth(3).expect("must provide input file");
 
-    let file = File::open(file_name).unwrap();
+    let file = fs::File::open(file_name).unwrap();
     let mut clock = sequencer::TickClock::new(bpm, ppqn);
     let mut seq = sequencer::MidiSequencer::new();
     let mut note_stack = Vec::new();
