@@ -3,25 +3,25 @@
 .time_sig 1/4
 
 # start "infinite" note
-push 3
+push 2
 push -10
 push 53
 push -1
 qnote
 
-push 3
+push 2
 push 0
 push 64
 push 1
 qnote
 
-push 3
+push 2
 push 2
 push 64
 push 1
 qnote
 
-push 3
+push 2
 push 4
 push 64
 push 1
@@ -32,19 +32,19 @@ push 1
 send
 yield
 
-push 3
+push 2
 push 0
 push 42
 push 1
 qnote
 
-push 3
+push 2
 push 3
 push 42
 push 1
 qnote
 
-push 3
+push 2
 push 5
 push 42
 push 1
@@ -56,7 +56,7 @@ send
 yield
 
 # stop the "infinite" note
-push 3
+push 2
 push -10
 push 0
 push 0
@@ -67,13 +67,13 @@ push 2
 send
 yield
 
-push 3
+push 2
 push -15
 push 80
 push -1
 qnote
 
-push 3
+push 2
 push 10
 push 80
 push 1
