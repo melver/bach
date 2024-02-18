@@ -5,12 +5,15 @@ use bach::sequencer::{self, SeqCommand};
 use bach::units::*;
 use bach::Result;
 use rand::{rngs::ThreadRng, Rng};
+use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
 // === Config ==================================================================
 
@@ -96,6 +99,18 @@ static mut CONFIG: Config = Config {
 fn cfg() -> &'static Config {
     // SAFETY: Initialized once at startup.
     unsafe { &CONFIG }
+}
+
+static mut RUNNING: AtomicBool = AtomicBool::new(true);
+
+fn is_running() -> bool {
+    unsafe { RUNNING.load(Ordering::Relaxed) }
+}
+
+fn reset_running() {
+    unsafe {
+        RUNNING.store(true, Ordering::Relaxed);
+    }
 }
 
 // === ClipGenome ==============================================================
@@ -451,9 +466,14 @@ impl Prog {
     }
 
     fn play(&self, clip: &ClipGenome) {
+        println!(":: begin clip {}", clip.comment);
         let mut cmd_idx: isize = 0;
         let mut skip_cmd = HashSet::new();
         while cmd_idx < clip.clip.len() as isize {
+            if !is_running() {
+                return;
+            }
+
             let seq_cmd = &clip.clip[cmd_idx as usize];
             cmd_idx += 1;
 
@@ -503,7 +523,7 @@ impl Prog {
         // Allow it to complete some of the sequences.
         println!(":: end clip");
         self.tick_until(&Duration::Beats(3, 1));
-        self.stop();
+        // Do not stop() here, so that chained clips sound smoother.
     }
 
     fn stop(&self) {
@@ -523,6 +543,9 @@ impl Prog {
                 None => ">>>".into(),
             };
             let cmd = prompt(&prompt_str);
+
+            // The command prompt can be exit with 'q'.
+            reset_running();
 
             match &mut clip {
                 Some(clip) => {
@@ -575,6 +598,7 @@ impl Prog {
                         }
                     } else if cmd == "p" {
                         self.play(clip);
+                        self.stop();
                     } else if let Some(suffix) = cmd.strip_prefix("w ") {
                         if let Err(e) = clip.serialize(Path::new(suffix)) {
                             println!("could not write file: {}", e);
@@ -641,6 +665,32 @@ impl Prog {
                         }
                     } else if cmd == "q" {
                         return false;
+                    } else if let Some(suffix) = cmd.strip_prefix("s ") {
+                        for part in suffix.split(',') {
+                            if !is_running() {
+                                break;
+                            }
+                            match part.parse::<usize>() {
+                                Ok(idx) => {
+                                    let pool = self.pool.borrow();
+                                    if idx >= pool.population().len() {
+                                        println!(
+                                            "index out of bounds: {} >= {}",
+                                            idx,
+                                            pool.population().len()
+                                        );
+                                        break;
+                                    }
+                                    let clip = &pool.population()[idx].1;
+                                    self.play(clip);
+                                }
+                                Err(e) => {
+                                    println!("invalid index: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        self.stop();
                     } else if cmd == "w" {
                         if cfg().population_path.is_empty() {
                             println!("no population path set");
@@ -660,12 +710,13 @@ impl Prog {
                             println!("unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  c       : continue");
-                        println!("  e <idx> : edit clip");
-                        println!("  i       : info");
-                        println!("  l       : load population");
-                        println!("  q       : quit");
-                        println!("  w       : write population");
+                        println!("  c           : continue");
+                        println!("  e <idx>     : edit clip");
+                        println!("  i           : info");
+                        println!("  l           : load population");
+                        println!("  q           : quit");
+                        println!("  s <idx>,... : play chained clips (song mode)");
+                        println!("  w           : write population");
                     }
                 }
             }
@@ -690,11 +741,9 @@ impl Prog {
                     continue;
                 }
                 assert!(clip.1.fitness.is_none());
-                println!(
-                    ":: begin clip :: generation {} :: {}",
-                    clip.0, clip.1.comment,
-                );
+                println!(":: evaluating clip from generation {}", clip.0,);
                 self.play(&clip.1);
+                self.stop();
                 while clip.1.fitness.is_none() {
                     println!(":: please set fitness ('f <fitness>')");
                     if !self.cmd_prompt(Some(&mut clip.1)) {
@@ -721,5 +770,19 @@ fn main() {
     unsafe {
         CONFIG.read_from_file();
     }
-    Prog::new().run()
+
+    let mut signals = Signals::new([SIGINT]).unwrap();
+    let sig_handle = signals.handle();
+    let sig_handler = thread::spawn(move || {
+        for _ in &mut signals {
+            println!("stopping ...");
+            unsafe {
+                RUNNING.store(false, Ordering::Relaxed);
+            }
+        }
+    });
+
+    Prog::new().run();
+    sig_handle.close();
+    sig_handler.join().unwrap();
 }
