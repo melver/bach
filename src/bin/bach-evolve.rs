@@ -22,6 +22,7 @@ struct Config {
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Note,
+    skip_allocated: bool,
     clip_init_len: usize,
     population_size: usize,
     mutation_probability: f32,
@@ -48,6 +49,8 @@ impl Config {
                 self.beats_per_bar = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
                 self.note_scale = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
+                self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
                 self.clip_init_len = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_size ") {
@@ -88,6 +91,7 @@ static mut CONFIG: Config = Config {
     channels: (0, 3),
     beats_per_bar: 8,
     note_scale: Note::Maj(60, 0),
+    skip_allocated: true,
     clip_init_len: 20,
     population_size: 12,
     mutation_probability: 0.2,
@@ -157,7 +161,7 @@ impl ClipGenome {
         if let Some(fitness) = self.fitness {
             writeln!(file, "# fitness: {}", fitness)?;
         }
-        writeln!(file, ".skip_allocated 1")?; // for bach-play
+        writeln!(file, ".skip_allocated {}", cfg().skip_allocated)?; // for bach-play
         for cmd in &self.clip {
             writeln!(file, "{}", cmd)?;
         }
@@ -489,34 +493,30 @@ impl Prog {
                     }
                 }
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                    match self.seq.borrow_mut().queue(
+                    if let Err(e) = self.seq.borrow_mut().queue(
                         &self.clock.borrow(),
                         *chan,
                         note,
                         velocity,
                         duration,
                     ) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            // Just keep playing anyway.
-                            println!(":: warning: {}", e);
-                        }
+                        // Just keep playing.
+                        println!(":: warning: {}", e);
                     }
                 }
                 SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
                     let eucl_seq = sequencer::euclidean_sequence(*pulses, *len, *offset);
-                    self.seq
-                        .borrow_mut()
-                        .queue_sequence(
-                            &self.clock.borrow(),
-                            *chan,
-                            notes,
-                            velocity,
-                            duration,
-                            &eucl_seq,
-                            true,
-                        )
-                        .unwrap();
+                    if let Err(e) = self.seq.borrow_mut().queue_sequence(
+                        &self.clock.borrow(),
+                        *chan,
+                        notes,
+                        velocity,
+                        duration,
+                        &eucl_seq,
+                        cfg().skip_allocated,
+                    ) {
+                        println!(":: warning: {}", e);
+                    }
                 }
             }
         }
@@ -584,10 +584,13 @@ impl Prog {
                                 Err(e) => println!("invalid index: {}", e),
                             }
                         }
-                    } else if let Some(suffix) = cmd.strip_prefix("f ") {
+                    } else if let Some(suffix) = cmd.to_lowercase().strip_prefix("f ") {
                         match suffix.parse() {
                             Ok(f) => clip.fitness = Some(f),
                             Err(e) => println!("invalid argument: {}", e),
+                        }
+                        if cmd.starts_with('F') {
+                            return true;
                         }
                     } else if cmd == "i" {
                         println!("comment: {}", clip.comment);

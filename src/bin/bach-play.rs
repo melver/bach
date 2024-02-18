@@ -53,8 +53,7 @@ fn main() {
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         } else if let Some(suffix) = line.strip_prefix(".skip_allocated ") {
-            let val: u8 = suffix.parse().unwrap();
-            skip_allocated = val != 0;
+            skip_allocated = suffix.parse().unwrap();
         } else {
             match line.parse() {
                 Ok(cmd) => clip.push(cmd),
