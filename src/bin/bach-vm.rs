@@ -32,12 +32,12 @@ fn main() {
         if line.starts_with('#') {
             continue;
         } else if let Some(suffix) = line.strip_prefix(".scale ") {
-            map_note = match suffix.into() {
+            map_note = match suffix.parse().unwrap() {
                 Note::Raw(_) => Some(Box::new(|n| Note::Raw(n as u8))),
                 Note::Maj(k, _) => Some(Box::new(move |n| Note::Maj(k, n))),
             }
         } else if let Some(suffix) = line.strip_prefix(".time_sig ") {
-            map_duration = match suffix.into() {
+            map_duration = match suffix.parse().unwrap() {
                 Duration::Ticks(_) => Some(Box::new(|d| Duration::Ticks(d as u64))),
                 Duration::Beats(1, bar) => Some(Box::new(move |d| Duration::Beats(d, bar))),
                 _ => panic!("invalid time signature: {}", suffix),
@@ -81,13 +81,10 @@ fn main() {
         };
         let mut seq = vmstate.seq.borrow_mut();
         let mut clock = vmstate.clock.borrow_mut();
-        let until_tick = seq.tick + clock.into_ticks(&tick_delta).unwrap();
-        while seq.tick != until_tick {
-            let midi_bytes = seq.tick(&clock);
-            clock.await_tick();
-            io::stdout().write_all(&midi_bytes).unwrap();
+        seq.tick_until(&mut clock, &tick_delta, &mut |b| {
+            io::stdout().write_all(b).unwrap();
             io::stdout().flush().unwrap();
-        }
+        });
     }
 
     // Stop all still playing notes.

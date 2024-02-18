@@ -32,8 +32,7 @@ impl fmt::Debug for dyn InstExtension {
 pub enum Inst {
     /// Extensions are additional instructions not implemented here, but require dynamic dispatch
     /// which may be slower than the builtin instructions.
-    Extension(Box<dyn InstExtension>),
-
+    Ext(Box<dyn InstExtension>),
     Add,
     Div,
     Dup,
@@ -56,10 +55,10 @@ impl Inst {
     /// Returns the jump offset from the current operation.
     fn eval(&self, stack: &mut Stack, mboxes: &Mailboxes) -> Result<isize> {
         match self {
-            Inst::Extension(e) => e.eval(stack, mboxes),
+            Inst::Ext(e) => e.eval(stack, mboxes),
             Inst::Add => {
                 if stack.len() < 2 {
-                    Err("add requires 2 operands")
+                    Err("add requires 2 operands".into())
                 } else {
                     let o1 = stack.pop().unwrap();
                     let o2 = stack.pop().unwrap();
@@ -75,32 +74,32 @@ impl Inst {
             }
             Inst::Div => {
                 if stack.len() < 2 {
-                    Err("div requires 2 operands")
+                    Err("div requires 2 operands".into())
                 } else {
                     let o2 = stack.pop().unwrap();
                     let o1 = stack.pop().unwrap();
                     let ret = match (o1, o2) {
                         (Op::Int(i1), Op::Int(i2)) => {
                             if i2 == 0 {
-                                return Err("divide by 0");
+                                return Err("divide by 0".into());
                             }
                             Op::Int(i1 / i2)
                         }
                         (Op::Float(f1), Op::Float(f2)) => {
                             if f2 == 0.0 {
-                                return Err("divide by 0");
+                                return Err("divide by 0".into());
                             }
                             Op::Float(f1 / f2)
                         }
                         (Op::Int(i1), Op::Float(f2)) => {
                             if f2 == 0.0 {
-                                return Err("divide by 0");
+                                return Err("divide by 0".into());
                             }
                             Op::Float(i1 as f32 / f2)
                         }
                         (Op::Float(f1), Op::Int(i2)) => {
                             if i2 == 0 {
-                                return Err("divide by 0");
+                                return Err("divide by 0".into());
                             }
                             Op::Float(f1 / i2 as f32)
                         }
@@ -111,7 +110,7 @@ impl Inst {
             }
             Inst::Dup => {
                 if stack.is_empty() {
-                    Err("dup requires 1 operand")
+                    Err("dup requires 1 operand".into())
                 } else {
                     stack.push(stack.last().unwrap().clone());
                     Ok(1)
@@ -120,7 +119,7 @@ impl Inst {
             Inst::Hlt => Ok(0),
             Inst::Jmp => {
                 if stack.is_empty() {
-                    Err("jmp requires 1 operand")
+                    Err("jmp requires 1 operand".into())
                 } else {
                     let offset = stack.pop().unwrap();
                     match offset {
@@ -131,7 +130,7 @@ impl Inst {
             }
             Inst::Jmplt => {
                 if stack.len() < 3 {
-                    Err("jmplt requires 3 operands")
+                    Err("jmplt requires 3 operands".into())
                 } else {
                     let o1 = stack.pop().unwrap();
                     let o2 = stack.pop().unwrap();
@@ -155,7 +154,7 @@ impl Inst {
             }
             Inst::Jmpz => {
                 if stack.len() < 2 {
-                    Err("jmpz requires 2 operands")
+                    Err("jmpz requires 2 operands".into())
                 } else {
                     let o1 = stack.pop().unwrap();
                     let o2 = stack.pop().unwrap();
@@ -172,7 +171,7 @@ impl Inst {
             }
             Inst::Mul => {
                 if stack.len() < 2 {
-                    Err("mul requires 2 operands")
+                    Err("mul requires 2 operands".into())
                 } else {
                     let o1 = stack.pop().unwrap();
                     let o2 = stack.pop().unwrap();
@@ -198,7 +197,7 @@ impl Inst {
             }
             Inst::Peek => {
                 if stack.is_empty() {
-                    Err("peek requires 1 operand")
+                    Err("peek requires 1 operand".into())
                 } else {
                     let mbox = match stack.pop().unwrap() {
                         Op::Int(i) => i,
@@ -213,7 +212,7 @@ impl Inst {
             }
             Inst::Recv => {
                 if stack.is_empty() {
-                    Err("recv requires 1 operand")
+                    Err("recv requires 1 operand".into())
                 } else {
                     let mbox = match stack.pop().unwrap() {
                         Op::Int(i) => i,
@@ -228,7 +227,7 @@ impl Inst {
             }
             Inst::Send => {
                 if stack.len() < 2 {
-                    Err("send requires 2 operands")
+                    Err("send requires 2 operands".into())
                 } else {
                     let op = stack.pop().unwrap();
                     let mbox = match stack.pop().unwrap() {
@@ -242,7 +241,7 @@ impl Inst {
             }
             Inst::Sub => {
                 if stack.len() < 2 {
-                    Err("sub requires 2 operands")
+                    Err("sub requires 2 operands".into())
                 } else {
                     let o2 = stack.pop().unwrap();
                     let o1 = stack.pop().unwrap();
@@ -421,7 +420,7 @@ mod tests {
             Inst::Push(Op::Int(11)),
         ];
         let mut core = Core::new(prog, Mailboxes::default());
-        assert_eq!(core.eval(None), Err("divide by 0"));
+        assert_eq!(core.eval(None), Err("divide by 0".into()));
         assert_eq!(core.cycles, 4);
         assert_eq!(core.pc, 4);
         assert_eq!(core.stack, vec![Op::Int(11)]);

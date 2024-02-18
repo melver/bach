@@ -6,4 +6,4 @@ pub mod sequencer;
 pub mod units;
 pub mod vm;
 
-pub type Result<T> = std::result::Result<T, &'static str>;
+pub type Result<T> = std::result::Result<T, String>;

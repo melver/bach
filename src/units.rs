@@ -17,17 +17,25 @@ pub enum Duration {
     End,
 }
 
-impl From<&str> for Duration {
-    fn from(s: &str) -> Self {
+impl std::str::FromStr for Duration {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
         if s == "*" {
-            Duration::Begin
+            Ok(Duration::Begin)
         } else if s == "-" {
-            Duration::End
+            Ok(Duration::End)
         } else if s.ends_with('t') {
-            Duration::Ticks(s.trim_end_matches('t').parse().unwrap())
+            Ok(Duration::Ticks(
+                s.trim_end_matches('t')
+                    .parse()
+                    .map_err(|e| format!("{}", e))?,
+            ))
         } else {
             let parts: Vec<&str> = s.split('/').collect();
-            Duration::Beats(parts[0].parse().unwrap(), parts[1].parse().unwrap())
+            Ok(Duration::Beats(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         }
     }
 }
@@ -52,15 +60,23 @@ pub enum Note {
     // TODO: more
 }
 
-impl From<&str> for Note {
-    fn from(s: &str) -> Self {
+impl std::str::FromStr for Note {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
         if s.starts_with('@') {
-            Note::Raw(s.trim_start_matches('@').parse().unwrap())
+            Ok(Note::Raw(
+                s.trim_start_matches('@')
+                    .parse()
+                    .map_err(|e| format!("{}", e))?,
+            ))
         } else if s.starts_with("maj@") {
             let parts: Vec<&str> = s.trim_start_matches("maj@").split(':').collect();
-            Note::Maj(parts[0].parse().unwrap(), parts[1].parse().unwrap())
+            Ok(Note::Maj(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
-            panic!("unknown note: {}", s);
+            Err(format!("unknown note: {}", s))
         }
     }
 }
@@ -115,7 +131,7 @@ impl From<&Note> for Result<u8> {
             }
         };
         if ret < 0 || ret > 127 {
-            Err("invalid Note")
+            Err(format!("invalid note: {}", note))
         } else {
             Ok(ret as u8)
         }
@@ -159,21 +175,22 @@ impl From<&Velocity> for u8 {
     }
 }
 
-impl From<&str> for Velocity {
-    fn from(s: &str) -> Self {
+impl std::str::FromStr for Velocity {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
-            "-" => Velocity::None,
-            "pppp" => Velocity::Pppp,
-            "ppp" => Velocity::Ppp,
-            "pp" => Velocity::Pp,
-            "p" => Velocity::P,
-            "mp" => Velocity::Mp,
-            "mf" => Velocity::Mf,
-            "f" => Velocity::F,
-            "ff" => Velocity::Ff,
-            "fff" => Velocity::Fff,
-            "ffff" => Velocity::Ffff,
-            _ => panic!("unknown velocity: {}", s),
+            "-" => Ok(Velocity::None),
+            "pppp" => Ok(Velocity::Pppp),
+            "ppp" => Ok(Velocity::Ppp),
+            "pp" => Ok(Velocity::Pp),
+            "p" => Ok(Velocity::P),
+            "mp" => Ok(Velocity::Mp),
+            "mf" => Ok(Velocity::Mf),
+            "f" => Ok(Velocity::F),
+            "ff" => Ok(Velocity::Ff),
+            "fff" => Ok(Velocity::Fff),
+            "ffff" => Ok(Velocity::Ffff),
+            _ => Err(format!("unknown velocity: {}", s)),
         }
     }
 }
@@ -239,18 +256,18 @@ mod tests {
 
     #[test]
     fn basic_string_conversions() {
-        assert!(Duration::from("*") == Duration::Begin);
-        assert!(Duration::from("-") == Duration::End);
-        assert!(Duration::from("3t") == Duration::Ticks(3));
-        assert!(Duration::from("1/4") == Duration::Beats(1, 4));
+        assert!("*".parse() == Ok(Duration::Begin));
+        assert!("-".parse() == Ok(Duration::End));
+        assert!("3t".parse() == Ok(Duration::Ticks(3)));
+        assert!("1/4".parse() == Ok(Duration::Beats(1, 4)));
 
-        assert!(Note::from("@60") == Note::Raw(60));
-        assert!(Note::from("maj@60:-1") == Note::Maj(60, -1));
-        assert!(Note::from("maj@60:0") == Note::Maj(60, 0));
+        assert!("@60".parse() == Ok(Note::Raw(60)));
+        assert!("maj@60:-1".parse() == Ok(Note::Maj(60, -1)));
+        assert!("maj@60:0".parse() == Ok(Note::Maj(60, 0)));
 
-        assert!(Velocity::from("-") == Velocity::None);
-        assert!(Velocity::from("mf") == Velocity::Mf);
-        assert!(Velocity::from("pppp") == Velocity::Pppp);
-        assert!(Velocity::from("fff") == Velocity::Fff);
+        assert!("-".parse() == Ok(Velocity::None));
+        assert!("mf".parse() == Ok(Velocity::Mf));
+        assert!("pppp".parse() == Ok(Velocity::Pppp));
+        assert!("fff".parse() == Ok(Velocity::Fff));
     }
 }

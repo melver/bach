@@ -1,13 +1,12 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 use bach::ga::{self, Genome};
-use bach::sequencer;
+use bach::sequencer::{self, SeqCommand};
 use bach::units::*;
 use rand::{rngs::ThreadRng, Rng};
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashSet;
-use std::fmt::{self, Display};
 use std::fs;
 use std::io::{self, BufRead, Write};
 
@@ -16,7 +15,7 @@ struct Config {
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Note,
-    song_init_len: usize,
+    clip_init_len: usize,
     population_size: usize,
     mutation_probability: f32,
     tournament_size: usize,
@@ -40,9 +39,9 @@ impl Config {
             } else if let Some(suffix) = line.strip_prefix("beats_per_bar ") {
                 self.beats_per_bar = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
-                self.note_scale = suffix.into();
-            } else if let Some(suffix) = line.strip_prefix("song_init_len ") {
-                self.song_init_len = suffix.parse().unwrap();
+                self.note_scale = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
+                self.clip_init_len = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_size ") {
                 self.population_size = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("mutation_probability ") {
@@ -75,7 +74,7 @@ static mut CONFIG: Config = Config {
     channels: (0, 3),
     beats_per_bar: 8,
     note_scale: Note::Maj(60, 0),
-    song_init_len: 20,
+    clip_init_len: 20,
     population_size: 12,
     mutation_probability: 0.2,
     tournament_size: 4,
@@ -87,49 +86,17 @@ fn cfg() -> &'static Config {
     unsafe { &CONFIG }
 }
 
-#[derive(Clone)]
-enum SeqCommand {
-    Jmp(isize),
-    QueueNote(u8, Note, Velocity, Duration),
-    QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
-    Advance(Duration),
-}
-
-impl Display for SeqCommand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SeqCommand::Jmp(offset) => write!(f, "# repeat <{}>", offset),
-            SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                write!(f, "n {} {} {} {}", chan, note, velocity, duration)
-            }
-            SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
-                for note in notes {
-                    writeln!(f, ". {}", note)?;
-                }
-                write!(
-                    f,
-                    "s {} {} {} {} {} {}",
-                    chan, velocity, duration, pulses, len, offset
-                )
-            }
-            SeqCommand::Advance(duration) => {
-                write!(f, "+ {}", duration)
-            }
-        }
-    }
-}
-
-struct Song {
-    pub cmds: Vec<SeqCommand>,
+struct ClipGenome {
+    pub clip: sequencer::Clip,
     pub init: bool,
     pub fitness: Option<f32>,
     pub comment: String,
 }
 
-impl From<Vec<SeqCommand>> for Song {
-    fn from(v: Vec<SeqCommand>) -> Self {
+impl From<sequencer::Clip> for ClipGenome {
+    fn from(v: sequencer::Clip) -> Self {
         Self {
-            cmds: v,
+            clip: v,
             init: true,
             fitness: None,
             comment: String::new(),
@@ -137,16 +104,16 @@ impl From<Vec<SeqCommand>> for Song {
     }
 }
 
-impl From<&Song> for Vec<SeqCommand> {
-    fn from(g: &Song) -> Self {
-        g.cmds.clone()
+impl From<&ClipGenome> for sequencer::Clip {
+    fn from(g: &ClipGenome) -> Self {
+        g.clip.clone()
     }
 }
 
-impl Default for Song {
+impl Default for ClipGenome {
     fn default() -> Self {
         Self {
-            cmds: vec![SeqCommand::Jmp(0); cfg().song_init_len],
+            clip: vec![SeqCommand::Jmp(0); cfg().clip_init_len],
             init: false,
             fitness: None,
             comment: String::new(),
@@ -154,7 +121,7 @@ impl Default for Song {
     }
 }
 
-impl Song {
+impl ClipGenome {
     fn gen_channel(&self, rng: &mut ThreadRng) -> u8 {
         rng.gen_range(cfg().channels.0..=cfg().channels.1)
     }
@@ -247,13 +214,13 @@ impl Song {
                     eucl_params.2,
                 )
             }
-            43..=100 => SeqCommand::Advance(self.gen_duration(rng, true)),
+            43..=100 => SeqCommand::Tick(self.gen_duration(rng, true)),
             _ => unreachable!(),
         }
     }
 }
 
-impl Genome for Song {
+impl Genome for ClipGenome {
     fn with_blueprint(mut self, _blueprint: &Self) -> Self {
         if !self.init {
             // From default().
@@ -266,15 +233,15 @@ impl Genome for Song {
     fn mutate(&mut self, mut_prob: f32) {
         let mut rng = rand::thread_rng();
         let mut used = HashSet::new();
-        let mut to_mutate = (self.cmds.len() as f32 * mut_prob) as usize;
+        let mut to_mutate = (self.clip.len() as f32 * mut_prob) as usize;
         while to_mutate != 0 {
-            let idx = rng.gen_range(0..self.cmds.len());
+            let idx = rng.gen_range(0..self.clip.len());
             if !used.insert(idx) {
                 continue;
             }
 
-            self.cmds[idx] = match &self.cmds[idx] {
-                SeqCommand::Jmp(_) | SeqCommand::Advance(_) => self.gen_cmd(&mut rng),
+            self.clip[idx] = match &self.clip[idx] {
+                SeqCommand::Jmp(_) | SeqCommand::Tick(_) => self.gen_cmd(&mut rng),
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
                     match rng.gen_range(0..=3) {
                         0 => SeqCommand::QueueNote(
@@ -383,7 +350,7 @@ struct Prog {
     midi_file: RefCell<fs::File>,
     clock: RefCell<sequencer::TickClock>,
     seq: RefCell<sequencer::MidiSequencer>,
-    pool: RefCell<ga::GenomePool<Song>>,
+    pool: RefCell<ga::GenomePool<ClipGenome>>,
 }
 
 impl Prog {
@@ -407,7 +374,7 @@ impl Prog {
             clock: RefCell::new(sequencer::TickClock::new(bpm, ppqn)),
             seq: RefCell::new(sequencer::MidiSequencer::new()),
             pool: RefCell::new(ga::GenomePool::new(
-                Song::default(),
+                ClipGenome::default(),
                 cfg().population_size,
                 cfg().mutation_probability,
             )),
@@ -419,23 +386,17 @@ impl Prog {
         let mut seq = self.seq.borrow_mut();
         let mut midi_file = self.midi_file.borrow_mut();
 
-        let until_tick = match clock.into_ticks(duration) {
-            Some(t) => seq.tick + t,
-            _ => unreachable!(),
-        };
-        while seq.tick != until_tick {
-            let midi_bytes = seq.tick(&clock);
-            clock.await_tick();
-            midi_file.write_all(&midi_bytes).unwrap();
+        seq.tick_until(&mut clock, duration, &mut |b| {
+            midi_file.write_all(b).unwrap();
             midi_file.flush().unwrap();
-        }
+        });
     }
 
-    fn play(&self, song: &Song) {
+    fn play(&self, clip: &ClipGenome) {
         let mut cmd_idx: isize = 0;
         let mut skip_cmd = HashSet::new();
-        while cmd_idx < song.cmds.len() as isize {
-            let seq_cmd = &song.cmds[cmd_idx as usize];
+        while cmd_idx < clip.clip.len() as isize {
+            let seq_cmd = &clip.clip[cmd_idx as usize];
             cmd_idx += 1;
 
             if !skip_cmd.contains(&cmd_idx) {
@@ -444,6 +405,7 @@ impl Prog {
             }
 
             match seq_cmd {
+                SeqCommand::Tick(delta) => self.advance(delta),
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
                         cmd_idx = cmp::max(0, cmd_idx + *offset);
@@ -479,33 +441,32 @@ impl Prog {
                         )
                         .unwrap();
                 }
-                SeqCommand::Advance(duration) => self.advance(duration),
             }
         }
         // Allow it to complete some of the sequences.
-        println!("# end song");
+        println!("# end clip");
         self.advance(&Duration::Beats(3, 1));
         self.stop();
     }
 
     fn stop(&self) {
         // Stop all still playing notes.
-        let stop_cmds = self.seq.borrow_mut().stop();
+        let stop_clip = self.seq.borrow_mut().stop();
         let mut midi_file = self.midi_file.borrow_mut();
-        midi_file.write_all(&stop_cmds).unwrap();
+        midi_file.write_all(&stop_clip).unwrap();
         self.clock.borrow_mut().reset();
     }
 
     /// Return true if program should keep running, false otherwise.
-    fn cmd_prompt(&self, mut song: Option<&mut Song>) -> bool {
+    fn cmd_prompt(&self, mut clip: Option<&mut ClipGenome>) -> bool {
         loop {
-            let prompt_str = match &song {
-                Some(s) => format!("song[{}]>", s.cmds.len()),
+            let prompt_str = match &clip {
+                Some(s) => format!("clip[{}]>", s.clip.len()),
                 None => ">>>".into(),
             };
             let cmd = prompt(&prompt_str);
 
-            match &mut song {
+            match &mut clip {
                 Some(s) => {
                     if cmd == "q" {
                         return false;
@@ -522,7 +483,7 @@ impl Prog {
                         if !cmd.is_empty() {
                             println!("unknown command: {}", cmd);
                         }
-                        println!("help [song]:");
+                        println!("help [clip]:");
                         println!("  b      : back");
                         println!("  f <val>: assign fitness value");
                         println!("  p      : play");
@@ -558,22 +519,22 @@ impl Prog {
             let mut pool = self.pool.borrow_mut();
             let mut selection = pool.select_uniform(cfg().tournament_size);
 
-            for song_ref in &selection {
-                let song = &mut pool[song_ref];
-                if song.1.is_eval() {
+            for clip_ref in &selection {
+                let clip = &mut pool[clip_ref];
+                if clip.1.is_eval() {
                     continue;
                 }
-                assert!(song.1.fitness.is_none());
+                assert!(clip.1.fitness.is_none());
                 println!(
-                    "# begin song[{}] | generation: {} | {}",
-                    song.1.cmds.len(),
-                    song.0,
-                    song.1.comment,
+                    "# begin clip[{}] | generation: {} | {}",
+                    clip.1.clip.len(),
+                    clip.0,
+                    clip.1.comment,
                 );
-                self.play(&song.1);
-                while song.1.fitness.is_none() {
+                self.play(&clip.1);
+                while clip.1.fitness.is_none() {
                     println!(":: please provide fitness");
-                    if !self.cmd_prompt(Some(&mut song.1)) {
+                    if !self.cmd_prompt(Some(&mut clip.1)) {
                         return;
                     }
                 }

@@ -7,7 +7,7 @@ use crate::Result;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Display};
 use std::rc::Rc;
 use std::{thread, time};
 
@@ -181,6 +181,21 @@ impl MidiSequencer {
         }
     }
 
+    pub fn tick_until<F>(&mut self, tick_clock: &mut TickClock, delta: &Duration, send_midi: &mut F)
+    where
+        F: FnMut(&[u8]),
+    {
+        let until_tick = match tick_clock.into_ticks(delta) {
+            Some(t) => self.tick + t,
+            _ => panic!("not a valid tick delta: {}", delta),
+        };
+        while self.tick != until_tick {
+            let midi_bytes = self.tick(tick_clock);
+            tick_clock.await_tick();
+            send_midi(&midi_bytes);
+        }
+    }
+
     /// Queue note messages based on raw MIDI parameters.
     fn queue_raw(
         &mut self,
@@ -193,16 +208,16 @@ impl MidiSequencer {
         skip_allocated: bool,
     ) -> Result<()> {
         if channel > 15 {
-            return Err("invalid channel");
+            return Err(format!("invalid channel: {}", channel));
         }
         if note > 127 {
-            return Err("invalid note");
+            return Err(format!("invalid note: {}", note));
         }
         if on_velocity > 127 {
-            return Err("invalid velocity");
+            return Err(format!("invalid velocity: {}", on_velocity));
         }
         if off_velocity > 127 {
-            return Err("invalid velocity");
+            return Err(format!("invalid velocity: {}", off_velocity));
         }
 
         if let Some(expiration) = self.allocated.get(&(channel, note)) {
@@ -210,7 +225,7 @@ impl MidiSequencer {
                 match ticks {
                     Some(0) => {
                         if *expiration != u64::MAX {
-                            return Err("cannot stop limited note");
+                            return Err(format!("cannot stop limited note: {}", note));
                         }
                     }
                     // We can't start a note that has not yet expired.
@@ -218,7 +233,7 @@ impl MidiSequencer {
                         if skip_allocated {
                             return Ok(());
                         } else {
-                            return Err("already allocated note");
+                            return Err(format!("already allocated note: {}", note));
                         }
                     }
                 }
@@ -346,6 +361,85 @@ impl Default for MidiSequencer {
     }
 }
 
+// === Clips ===================================================================
+
+#[derive(Clone)]
+pub enum SeqCommand {
+    Tick(Duration),
+    Jmp(isize),
+    QueueNote(u8, Note, Velocity, Duration),
+    QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
+}
+
+impl std::str::FromStr for SeqCommand {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
+        if let Some(suffix) = s.strip_prefix("+ ") {
+            Ok(SeqCommand::Tick(suffix.parse()?))
+        } else if let Some(suffix) = s.strip_prefix("j ") {
+            Ok(SeqCommand::Jmp(
+                suffix.parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if let Some(suffix) = s.strip_prefix("n ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let note: Note = parts[1].parse()?;
+            let velocity: Velocity = parts[2].parse()?;
+            let duration: Duration = parts[3].parse()?;
+            Ok(SeqCommand::QueueNote(chan, note, velocity, duration))
+        } else if let Some(suffix) = s.strip_prefix("s ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let mut notes = vec![];
+            for note in parts[1].split(',') {
+                notes.push(note.parse()?);
+            }
+            let velocity: Velocity = parts[2].parse()?;
+            let duration: Duration = parts[3].parse()?;
+            let pulses = parts[4].parse().map_err(|e| format!("{}", e))?;
+            let length = parts[5].parse().map_err(|e| format!("{}", e))?;
+            let offset = parts[6].parse().map_err(|e| format!("{}", e))?;
+            Ok(SeqCommand::QueueSequence(
+                chan, notes, velocity, duration, pulses, length, offset,
+            ))
+        } else {
+            Err(format!("unknown command: {}", s))
+        }
+    }
+}
+
+impl Display for SeqCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SeqCommand::Jmp(offset) => write!(f, "j {}", offset),
+            SeqCommand::QueueNote(chan, note, velocity, duration) => {
+                write!(f, "n {} {} {} {}", chan, note, velocity, duration)
+            }
+            SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
+                let notes_as_str: Vec<String> = notes.iter().map(|n| format!("{}", n)).collect();
+                write!(
+                    f,
+                    "s {} {} {} {} {} {} {}",
+                    chan,
+                    notes_as_str.join(","),
+                    velocity,
+                    duration,
+                    pulses,
+                    len,
+                    offset
+                )
+            }
+            SeqCommand::Tick(duration) => {
+                write!(f, "+ {}", duration)
+            }
+        }
+    }
+}
+
+pub type Clip = Vec<SeqCommand>;
+
+// === Extension for VM ========================================================
+
 pub struct SeqVmState {
     pub clock: RefCell<TickClock>,
     pub seq: RefCell<MidiSequencer>,
@@ -362,7 +456,7 @@ impl InstExtension for SeqInst {
         match self {
             SeqInst::QueueNote(vmstate) => {
                 if stack.len() < 4 {
-                    Err("QueueNote requires 4 arguments")
+                    Err("QueueNote requires 4 arguments".into())
                 } else {
                     let duration_int = match stack.pop().unwrap() {
                         Op::Int(i) => i,
@@ -405,7 +499,7 @@ impl InstExtension for SeqInst {
 
 impl From<SeqInst> for Inst {
     fn from(si: SeqInst) -> Self {
-        Inst::Extension(Box::new(si))
+        Inst::Ext(Box::new(si))
     }
 }
 
@@ -417,6 +511,8 @@ impl SeqInst {
         }
     }
 }
+
+// ==============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -758,7 +854,10 @@ mod tests {
             Inst::Nop,
         ];
         let mut core = Core::new(prog, Mailboxes::default());
-        assert_eq!(core.eval(None), Err("QueueNote requires 4 arguments"));
+        assert_eq!(
+            core.eval(None),
+            Err("QueueNote requires 4 arguments".into())
+        );
         assert_eq!(core.pc, 4);
         assert_eq!(core.stack, vec![Op::Int(11)]);
     }

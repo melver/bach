@@ -8,8 +8,8 @@
 //
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
-use bach::sequencer;
-use bach::units::*;
+use bach::sequencer::{self, SeqCommand};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 
@@ -24,78 +24,71 @@ fn main() {
         .expect("must provide PPQN")
         .parse()
         .expect("not a valid integer");
-    let file_name = std::env::args().nth(3).expect("must provide input file");
+    let input_path = std::env::args().nth(3).expect("must provide input file");
+    let midi_path = std::env::args()
+        .nth(4)
+        .expect("must provide MIDI output device");
 
-    let file = fs::File::open(file_name).unwrap();
-    let mut clock = sequencer::TickClock::new(bpm, ppqn);
-    let mut seq = sequencer::MidiSequencer::new();
-    let mut note_stack = Vec::new();
+    let input_file = fs::File::open(input_path).unwrap();
+    let mut midi_write: Box<dyn FnMut(&[u8])> = if midi_path == "-" {
+        Box::new(|b| {
+            io::stdout().write_all(b).unwrap();
+            io::stdout().flush().unwrap();
+        })
+    } else {
+        let mut f = fs::OpenOptions::new().write(true).open(&midi_path).unwrap();
+        Box::new(move |b| {
+            f.write_all(b).unwrap();
+            f.flush().unwrap();
+        })
+    };
+
+    let mut clip: sequencer::Clip = vec![];
     let mut skip_allocated = false;
 
     let mut line_num = 0;
-    for line in io::BufReader::new(file).lines().flatten() {
+    for line in io::BufReader::new(input_file).lines().flatten() {
         line_num += 1;
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         } else if let Some(suffix) = line.strip_prefix(".skip_allocated ") {
             let val: u8 = suffix.parse().unwrap();
             skip_allocated = val != 0;
-        } else if let Some(suffix) = line.strip_prefix("+ ") {
-            let tick_delta: Duration = suffix.into();
-            let until_tick = match clock.into_ticks(&tick_delta) {
-                Some(t) => seq.tick + t,
-                _ => panic!("not a valid tick delta: {}", suffix),
-            };
-            while seq.tick != until_tick {
-                let midi_bytes = seq.tick(&clock);
-                clock.await_tick();
-                io::stdout().write_all(&midi_bytes).unwrap();
-                io::stdout().flush().unwrap();
+        } else {
+            match line.parse() {
+                Ok(cmd) => clip.push(cmd),
+                Err(e) => panic!("line {}: {}", line_num, e),
             }
-        } else if let Some(suffix) = line.strip_prefix("n ") {
-            let parts: Vec<&str> = suffix.split(' ').collect();
-            let chan: u8 = parts[0].parse().unwrap();
-            let note: Note = parts[1].into();
-            let velocity: Velocity = parts[2].into();
-            let duration: Duration = parts[3].into();
+        }
+    }
 
-            seq.queue(&clock, chan, &note, &velocity, &duration)
-                .unwrap();
-        } else if let Some(suffix) = line.strip_prefix(". ") {
-            let note: Note = suffix.into();
-            note_stack.push(note);
-        } else if let Some(suffix) = line.strip_prefix("s ") {
-            let parts: Vec<&str> = suffix.split(' ').collect();
-            let chan: u8 = parts[0].parse().unwrap();
-            let velocity: Velocity = parts[1].into();
-            let duration: Duration = parts[2].into();
-            let pulses = parts[3].parse().expect("invalid pulses");
-            let length = parts[4].parse().expect("invalid length");
-            let offset = parts[5].parse().expect("invalid offset");
-            let sequence = sequencer::euclidean_sequence(pulses, length, offset);
-            if note_stack.is_empty() {
-                panic!("line {}: note stack is empty!", line_num);
-            }
-            match seq.queue_sequence(
-                &clock,
-                chan,
-                &note_stack,
-                &velocity,
-                &duration,
-                &sequence,
-                skip_allocated,
-            ) {
-                Ok(()) => {}
-                Err(e) => {
-                    panic!("line {}: {}", line_num, e);
+    let mut clock = sequencer::TickClock::new(bpm, ppqn);
+    let mut seq = sequencer::MidiSequencer::new();
+    let mut skip_cmd = HashSet::new();
+    let mut cmd_idx: isize = 0;
+
+    while cmd_idx < clip.len() as isize {
+        let seq_cmd = &clip[cmd_idx as usize];
+        cmd_idx += 1;
+        if midi_path != "-" {
+            println!("{}", seq_cmd);
+        }
+        match seq_cmd {
+            SeqCommand::Tick(delta) => seq.tick_until(&mut clock, delta, &mut midi_write),
+            SeqCommand::Jmp(offset) => {
+                if skip_cmd.insert(cmd_idx) {
+                    cmd_idx = std::cmp::max(0, cmd_idx + *offset);
                 }
             }
-            note_stack.clear();
-        } else {
-            panic!("line {}: unknown statement: {}", line_num, line);
+            SeqCommand::QueueNote(c, n, v, d) => seq.queue(&clock, *c, n, v, d).unwrap(),
+            SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
+                let eucl = sequencer::euclidean_sequence(*p, *l, *o);
+                seq.queue_sequence(&clock, *c, ns, v, d, &eucl, skip_allocated)
+                    .unwrap();
+            }
         }
     }
 
     // Stop all still playing notes.
-    io::stdout().write_all(&seq.stop()).unwrap();
+    midi_write(&seq.stop());
 }
