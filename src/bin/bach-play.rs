@@ -71,8 +71,8 @@ fn main() {
     while cmd_idx < clip.len() as isize {
         let seq_cmd = &clip[cmd_idx as usize];
         cmd_idx += 1;
-        if midi_path != "-" {
-            println!("{}", seq_cmd);
+        if midi_path != "-" && !skip_cmd.contains(&cmd_idx) {
+            println!("<{}> {}", cmd_idx, seq_cmd);
         }
         match seq_cmd {
             SeqCommand::Tick(delta) => seq.tick_until(&mut clock, delta, &mut midi_write),
@@ -81,11 +81,16 @@ fn main() {
                     cmd_idx = std::cmp::max(0, cmd_idx + *offset);
                 }
             }
-            SeqCommand::QueueNote(c, n, v, d) => seq.queue(&clock, *c, n, v, d).unwrap(),
+            SeqCommand::QueueNote(c, n, v, d) => {
+                if let Err(e) = seq.queue(&clock, *c, n, v, d) {
+                    println!(":: warning: {}", e);
+                }
+            }
             SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
                 let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                seq.queue_sequence(&clock, *c, ns, v, d, &eucl, skip_allocated)
-                    .unwrap();
+                if let Err(e) = seq.queue_sequence(&clock, *c, ns, v, d, &eucl, skip_allocated) {
+                    println!(":: warning: {}", e);
+                }
             }
         }
     }

@@ -480,7 +480,6 @@ impl Prog {
 
             let seq_cmd = &clip.clip[cmd_idx as usize];
             cmd_idx += 1;
-
             if !skip_cmd.contains(&cmd_idx) {
                 println!("<{}> {}", cmd_idx, seq_cmd);
             }
