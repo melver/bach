@@ -70,7 +70,6 @@ fn main() {
 
     while cmd_idx < clip.len() as isize {
         let seq_cmd = &clip[cmd_idx as usize];
-        cmd_idx += 1;
         if midi_path != "-" && !skip_cmd.contains(&cmd_idx) {
             println!("<{}> {}", cmd_idx, seq_cmd);
         }
@@ -93,6 +92,7 @@ fn main() {
                 }
             }
         }
+        cmd_idx += 1;
     }
 
     // Stop all still playing notes.
