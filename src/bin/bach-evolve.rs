@@ -3,12 +3,14 @@
 use bach::ga::{self, Genome};
 use bach::sequencer::{self, SeqCommand};
 use bach::units::*;
+use bach::Result;
 use rand::{rngs::ThreadRng, Rng};
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 // === Config ==================================================================
 
@@ -22,6 +24,7 @@ struct Config {
     mutation_probability: f32,
     tournament_size: usize,
     tournament_winners: usize,
+    population_path: String,
 }
 
 impl Config {
@@ -52,6 +55,8 @@ impl Config {
                 self.tournament_size = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("tournament_winners ") {
                 self.tournament_winners = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("population_path ") {
+                self.population_path = suffix.into();
             } else {
                 panic!("unknown configuration: {}", line);
             }
@@ -70,6 +75,10 @@ impl Config {
             Note::Maj(k, _) => Note::Maj(k, note),
         }
     }
+
+    fn population_path(&self) -> &Path {
+        Path::new(&self.population_path)
+    }
 }
 
 static mut CONFIG: Config = Config {
@@ -81,6 +90,7 @@ static mut CONFIG: Config = Config {
     mutation_probability: 0.2,
     tournament_size: 4,
     tournament_winners: 2,
+    population_path: String::new(),
 };
 
 fn cfg() -> &'static Config {
@@ -126,6 +136,49 @@ impl Default for ClipGenome {
 }
 
 impl ClipGenome {
+    fn serialize(&self, path: &Path) -> std::result::Result<(), io::Error> {
+        let mut file = fs::File::create(path)?;
+        writeln!(file, "# comment: {}", self.comment)?;
+        if let Some(fitness) = self.fitness {
+            writeln!(file, "# fitness: {}", fitness)?;
+        }
+        writeln!(file, ".skip_allocated 1")?; // for bach-play
+        for cmd in &self.clip {
+            writeln!(file, "{}", cmd)?;
+        }
+        println!("wrote {}", path.display());
+        Ok(())
+    }
+
+    fn deserialize(&mut self, path: &Path) -> Result<()> {
+        let file = fs::File::open(path).map_err(|e| format!("{}", e))?;
+        let mut line_num = 0;
+        let mut clip: sequencer::Clip = vec![];
+        for line in io::BufReader::new(file).lines().flatten() {
+            line_num += 1;
+            if let Some(suffix) = line.strip_prefix("# comment: ") {
+                self.comment = suffix.into();
+            }
+            if let Some(suffix) = line.strip_prefix("# fitness: ") {
+                self.fitness = Some(suffix.parse().map_err(|e| format!("{}", e))?);
+            } else if line.trim().is_empty()
+                || line.starts_with('#')
+                || line.starts_with(".skip_allocated")
+            {
+                continue;
+            } else {
+                match line.parse() {
+                    Ok(cmd) => clip.push(cmd),
+                    Err(e) => return Err(format!("line {}: {}", line_num, e)),
+                }
+            }
+        }
+        // Only update if reading the whole file succeeded.
+        self.clip = clip;
+        println!("loaded {}", path.display());
+        Ok(())
+    }
+
     fn gen_channel(&self, rng: &mut ThreadRng) -> u8 {
         rng.gen_range(cfg().channels.0..=cfg().channels.1)
     }
@@ -387,7 +440,7 @@ impl Prog {
         }
     }
 
-    fn advance(&self, duration: &Duration) {
+    fn tick_until(&self, duration: &Duration) {
         let mut clock = self.clock.borrow_mut();
         let mut seq = self.seq.borrow_mut();
         let mut midi_file = self.midi_file.borrow_mut();
@@ -409,7 +462,7 @@ impl Prog {
             }
 
             match seq_cmd {
-                SeqCommand::Tick(delta) => self.advance(delta),
+                SeqCommand::Tick(delta) => self.tick_until(delta),
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
                         cmd_idx = cmp::max(0, cmd_idx + *offset);
@@ -449,7 +502,7 @@ impl Prog {
         }
         // Allow it to complete some of the sequences.
         println!(":: end clip");
-        self.advance(&Duration::Beats(3, 1));
+        self.tick_until(&Duration::Beats(3, 1));
         self.stop();
     }
 
@@ -462,19 +515,18 @@ impl Prog {
     }
 
     /// Return true if program should keep running, false otherwise.
+    #[must_use]
     fn cmd_prompt(&self, mut clip: Option<&mut ClipGenome>) -> bool {
         loop {
             let prompt_str = match &clip {
-                Some(s) => format!("clip[{}]>", s.clip.len()),
+                Some(s) => format!("clip[{}]>", s.fitness.unwrap_or(-999.0)),
                 None => ">>>".into(),
             };
             let cmd = prompt(&prompt_str);
 
             match &mut clip {
                 Some(clip) => {
-                    if cmd == "q" {
-                        return false;
-                    } else if cmd == "b" {
+                    if cmd == "b" {
                         return true;
                     } else if let Some(suffix) = cmd.strip_prefix('c') {
                         if suffix.is_empty() {
@@ -509,13 +561,26 @@ impl Prog {
                                 Err(e) => println!("invalid index: {}", e),
                             }
                         }
-                    } else if cmd == "p" {
-                        self.play(clip);
                     } else if let Some(suffix) = cmd.strip_prefix("f ") {
                         match suffix.parse() {
                             Ok(f) => clip.fitness = Some(f),
                             Err(e) => println!("invalid argument: {}", e),
                         }
+                    } else if cmd == "i" {
+                        println!("comment: {}", clip.comment);
+                        println!("fitness: {:?}", clip.fitness);
+                    } else if let Some(suffix) = cmd.strip_prefix("l ") {
+                        if let Err(e) = clip.deserialize(Path::new(suffix)) {
+                            println!("could not read file: {}", e);
+                        }
+                    } else if cmd == "p" {
+                        self.play(clip);
+                    } else if let Some(suffix) = cmd.strip_prefix("w ") {
+                        if let Err(e) = clip.serialize(Path::new(suffix)) {
+                            println!("could not write file: {}", e);
+                        }
+                    } else if cmd == "q" {
+                        return false;
                     } else {
                         if !cmd.is_empty() {
                             println!("unknown command: {}", cmd);
@@ -526,23 +591,81 @@ impl Prog {
                         println!("  d               : dump");
                         println!("  e <idx> = <cmd> : edit command at index");
                         println!("  f <val>         : assign fitness value");
+                        println!("  i               : info");
+                        println!("  l <file>        : load from file");
                         println!("  p               : play");
                         println!("  q               : quit");
+                        println!("  w <file>        : write");
                     }
                 }
                 None => {
-                    if cmd == "q" {
-                        return false;
-                    } else if cmd == "c" {
+                    if cmd == "c" {
                         return true;
+                    } else if let Some(suffix) = cmd.strip_prefix("e ") {
+                        match suffix.parse::<usize>() {
+                            Ok(idx) => {
+                                let mut pool = self.pool.borrow_mut();
+                                let selection = pool.select_all();
+                                if idx >= selection.len() {
+                                    println!("index out of bounds: {} >= {}", idx, selection.len());
+                                } else if !self.cmd_prompt(Some(&mut pool[&selection[idx]].1)) {
+                                    return false;
+                                }
+                            }
+                            Err(e) => println!("invalid index: {}", e),
+                        }
+                    } else if cmd == "i" {
+                        let pool = self.pool.borrow();
+                        println!("on generation: {}", pool.generation());
+                        for idx in 0..pool.population().len() {
+                            let clip = &pool.population()[idx];
+                            println!(
+                                "<{}> fitness {:?}, generation {} :: {}",
+                                idx, clip.1.fitness, clip.0, clip.1.comment
+                            );
+                        }
+                    } else if cmd == "l" {
+                        if cfg().population_path.is_empty() {
+                            println!("no population path set");
+                        } else {
+                            let mut pool = self.pool.borrow_mut();
+                            let selection = pool.select_all();
+                            for idx in 0..pool.population().len() {
+                                let clip = &mut pool[&selection[idx]].1;
+                                let path = cfg().population_path().join(format!("{}.ch", idx));
+                                if let Err(e) = clip.deserialize(&path) {
+                                    println!("could not load file {}: {}", path.display(), e);
+                                    break;
+                                }
+                            }
+                        }
+                    } else if cmd == "q" {
+                        return false;
+                    } else if cmd == "w" {
+                        if cfg().population_path.is_empty() {
+                            println!("no population path set");
+                        } else {
+                            let pool = self.pool.borrow();
+                            for idx in 0..pool.population().len() {
+                                let clip = &pool.population()[idx].1;
+                                let path = cfg().population_path().join(format!("{}.ch", idx));
+                                if let Err(e) = clip.serialize(&path) {
+                                    println!("could not write file {}: {}", path.display(), e);
+                                    break;
+                                }
+                            }
+                        }
                     } else {
                         if !cmd.is_empty() {
                             println!("unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  c: continue");
-                        println!("  h: help");
-                        println!("  q: quit");
+                        println!("  c       : continue");
+                        println!("  e <idx> : edit clip");
+                        println!("  i       : info");
+                        println!("  l       : load population");
+                        println!("  q       : quit");
+                        println!("  w       : write population");
                     }
                 }
             }
@@ -551,14 +674,16 @@ impl Prog {
 
     fn run(&self) {
         loop {
-            println!(":: generation {}", self.pool.borrow().generation());
             if !self.cmd_prompt(None) {
                 break;
             }
 
+            println!(
+                ":: evaluating generation {}",
+                self.pool.borrow().generation()
+            );
             let mut pool = self.pool.borrow_mut();
             let mut selection = pool.select_uniform(cfg().tournament_size);
-
             for clip_ref in &selection {
                 let clip = &mut pool[clip_ref];
                 if clip.1.is_eval() {
@@ -566,14 +691,12 @@ impl Prog {
                 }
                 assert!(clip.1.fitness.is_none());
                 println!(
-                    ":: begin clip[{}] | generation: {} | {}",
-                    clip.1.clip.len(),
-                    clip.0,
-                    clip.1.comment,
+                    ":: begin clip :: generation {} :: {}",
+                    clip.0, clip.1.comment,
                 );
                 self.play(&clip.1);
                 while clip.1.fitness.is_none() {
-                    println!(":: please provide fitness");
+                    println!(":: please set fitness ('f <fitness>')");
                     if !self.cmd_prompt(Some(&mut clip.1)) {
                         return;
                     }

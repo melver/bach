@@ -9,6 +9,7 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 use bach::sequencer::{self, SeqCommand};
+use bach::units::*;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -61,6 +62,7 @@ fn main() {
             }
         }
     }
+    clip.push(SeqCommand::Tick(Duration::Beats(3, 1)));
 
     let mut clock = sequencer::TickClock::new(bpm, ppqn);
     let mut seq = sequencer::MidiSequencer::new();

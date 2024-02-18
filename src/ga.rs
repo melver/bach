@@ -216,7 +216,8 @@ impl<G: Genome + Default> GenomePool<G> {
         GenomeRef(self.get_tag(), best)
     }
 
-    /// Select all genomes in the current population.
+    /// Select all genomes in the current population. The order is the same as the underlying
+    /// `population` vector.
     pub fn select_all(&self) -> Vec<GenomeRef> {
         let tag = self.get_tag();
         (0..self.population.len())
