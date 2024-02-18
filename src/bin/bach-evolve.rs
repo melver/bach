@@ -198,6 +198,13 @@ impl ClipGenome {
         Ok(())
     }
 
+    fn fitness_as_str(&self) -> String {
+        match self.fitness {
+            Some(f) => format!("{}", f),
+            None => "none".into(),
+        }
+    }
+
     fn gen_channel(&self, rng: &mut ThreadRng) -> u8 {
         rng.gen_range(cfg().channels.0..=cfg().channels.1)
     }
@@ -539,7 +546,7 @@ impl Prog {
     fn cmd_prompt(&self, mut clip: Option<&mut ClipGenome>) -> bool {
         loop {
             let prompt_str = match &clip {
-                Some(s) => format!("clip[{}]>", s.fitness.unwrap_or(-999.0)),
+                Some(clip) => format!("clip[{}]>", clip.fitness_as_str()),
                 None => ">>>".into(),
             };
             let cmd = prompt(&prompt_str);
@@ -594,7 +601,7 @@ impl Prog {
                         }
                     } else if cmd == "i" {
                         println!("comment: {}", clip.comment);
-                        println!("fitness: {:?}", clip.fitness);
+                        println!("fitness: {}", clip.fitness_as_str());
                     } else if let Some(suffix) = cmd.strip_prefix("l ") {
                         if let Err(e) = clip.deserialize(Path::new(suffix)) {
                             println!("could not read file: {}", e);
@@ -647,8 +654,11 @@ impl Prog {
                         for idx in 0..pool.population().len() {
                             let clip = &pool.population()[idx];
                             println!(
-                                "<{}> fitness {:?}, generation {} :: {}",
-                                idx, clip.1.fitness, clip.0, clip.1.comment
+                                "<{}> fitness {}, generation {} :: {}",
+                                idx,
+                                clip.1.fitness_as_str(),
+                                clip.0,
+                                clip.1.comment
                             );
                         }
                     } else if cmd == "l" {
