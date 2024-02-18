@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 
+// === Config ==================================================================
+
 #[derive(Debug)]
 struct Config {
     channels: (u8, u8),
@@ -85,6 +87,8 @@ fn cfg() -> &'static Config {
     // SAFETY: Initialized once at startup.
     unsafe { &CONFIG }
 }
+
+// === ClipGenome ==============================================================
 
 struct ClipGenome {
     pub clip: sequencer::Clip,
@@ -338,6 +342,8 @@ impl Genome for ClipGenome {
     }
 }
 
+// === Prog ====================================================================
+
 fn prompt(prompt: &str) -> String {
     print!("{} ", prompt);
     io::stdout().flush().unwrap();
@@ -385,7 +391,6 @@ impl Prog {
         let mut clock = self.clock.borrow_mut();
         let mut seq = self.seq.borrow_mut();
         let mut midi_file = self.midi_file.borrow_mut();
-
         seq.tick_until(&mut clock, duration, &mut |b| {
             midi_file.write_all(b).unwrap();
             midi_file.flush().unwrap();
@@ -400,8 +405,7 @@ impl Prog {
             cmd_idx += 1;
 
             if !skip_cmd.contains(&cmd_idx) {
-                println!("# <{}> ", cmd_idx);
-                println!("{}", seq_cmd);
+                println!("<{}> {}", cmd_idx, seq_cmd);
             }
 
             match seq_cmd {
@@ -422,7 +426,7 @@ impl Prog {
                         Ok(()) => {}
                         Err(e) => {
                             // Just keep playing anyway.
-                            println!("# warning: {}", e);
+                            println!(":: warning: {}", e);
                         }
                     }
                 }
@@ -444,7 +448,7 @@ impl Prog {
             }
         }
         // Allow it to complete some of the sequences.
-        println!("# end clip");
+        println!(":: end clip");
         self.advance(&Duration::Beats(3, 1));
         self.stop();
     }
@@ -467,27 +471,63 @@ impl Prog {
             let cmd = prompt(&prompt_str);
 
             match &mut clip {
-                Some(s) => {
+                Some(clip) => {
                     if cmd == "q" {
                         return false;
                     } else if cmd == "b" {
                         return true;
+                    } else if let Some(suffix) = cmd.strip_prefix('c') {
+                        if suffix.is_empty() {
+                            println!("current comment: {}", clip.comment);
+                        } else {
+                            clip.comment = suffix.trim().into();
+                        }
+                    } else if cmd == "d" {
+                        for i in 0..clip.clip.len() {
+                            println!("<{}> {}", i, clip.clip[i]);
+                        }
+                    } else if let Some(suffix) = cmd.strip_prefix("e ") {
+                        let parts: Vec<&str> = suffix.split('=').map(|s| s.trim()).collect();
+                        if parts.len() < 2 {
+                            println!("missing arguments: must provide command");
+                        } else {
+                            match parts[0].parse::<usize>() {
+                                Ok(idx) => match parts[1].parse() {
+                                    Ok(cmd) => {
+                                        if idx < clip.clip.len() {
+                                            clip.clip[idx] = cmd;
+                                        } else {
+                                            println!(
+                                                "index out of bounds: {} >= {}",
+                                                idx,
+                                                clip.clip.len()
+                                            );
+                                        }
+                                    }
+                                    Err(e) => println!("invalid command: {}", e),
+                                },
+                                Err(e) => println!("invalid index: {}", e),
+                            }
+                        }
                     } else if cmd == "p" {
-                        self.play(s);
+                        self.play(clip);
                     } else if let Some(suffix) = cmd.strip_prefix("f ") {
                         match suffix.parse() {
-                            Ok(f) => s.fitness = Some(f),
+                            Ok(f) => clip.fitness = Some(f),
                             Err(e) => println!("invalid argument: {}", e),
                         }
                     } else {
                         if !cmd.is_empty() {
                             println!("unknown command: {}", cmd);
                         }
-                        println!("help [clip]:");
-                        println!("  b      : back");
-                        println!("  f <val>: assign fitness value");
-                        println!("  p      : play");
-                        println!("  q      : quit");
+                        println!("clip help:");
+                        println!("  b               : back");
+                        println!("  c <comment>     : comment");
+                        println!("  d               : dump");
+                        println!("  e <idx> = <cmd> : edit command at index");
+                        println!("  f <val>         : assign fitness value");
+                        println!("  p               : play");
+                        println!("  q               : quit");
                     }
                 }
                 None => {
@@ -499,7 +539,7 @@ impl Prog {
                         if !cmd.is_empty() {
                             println!("unknown command: {}", cmd);
                         }
-                        println!("help [main]:");
+                        println!("main help:");
                         println!("  c: continue");
                         println!("  h: help");
                         println!("  q: quit");
@@ -526,7 +566,7 @@ impl Prog {
                 }
                 assert!(clip.1.fitness.is_none());
                 println!(
-                    "# begin clip[{}] | generation: {} | {}",
+                    ":: begin clip[{}] | generation: {} | {}",
                     clip.1.clip.len(),
                     clip.0,
                     clip.1.comment,

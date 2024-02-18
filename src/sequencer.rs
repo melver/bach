@@ -380,6 +380,9 @@ impl std::str::FromStr for SeqCommand {
             Ok(SeqCommand::Jmp(
                 suffix.parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s == "nop" {
+            // nop is an alias for "j 0"
+            Ok(SeqCommand::Jmp(0))
         } else if let Some(suffix) = s.strip_prefix("n ") {
             let parts: Vec<&str> = suffix.split(' ').collect();
             let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
