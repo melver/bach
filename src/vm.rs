@@ -6,6 +6,7 @@ use std::cmp;
 use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
@@ -262,36 +263,39 @@ impl Inst {
 
 pub type Program = Vec<Inst>;
 
-impl From<&str> for Inst {
-    fn from(s: &str) -> Self {
+impl FromStr for Inst {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
         match s {
-            "add" => Inst::Add,
-            "div" => Inst::Div,
-            "dup" => Inst::Dup,
-            "hlt" => Inst::Hlt,
-            "jmp" => Inst::Jmp,
-            "jmplt" => Inst::Jmplt,
-            "jmpz" => Inst::Jmpz,
-            "mul" => Inst::Mul,
-            "nop" => Inst::Nop,
-            "pop" => Inst::Pop,
-            "peek" => Inst::Peek,
-            "recv" => Inst::Recv,
-            "send" => Inst::Send,
-            "sub" => Inst::Sub,
-            "yield" => Inst::Yield,
+            "add" => Ok(Inst::Add),
+            "div" => Ok(Inst::Div),
+            "dup" => Ok(Inst::Dup),
+            "hlt" => Ok(Inst::Hlt),
+            "jmp" => Ok(Inst::Jmp),
+            "jmplt" => Ok(Inst::Jmplt),
+            "jmpz" => Ok(Inst::Jmpz),
+            "mul" => Ok(Inst::Mul),
+            "nop" => Ok(Inst::Nop),
+            "pop" => Ok(Inst::Pop),
+            "peek" => Ok(Inst::Peek),
+            "recv" => Ok(Inst::Recv),
+            "send" => Ok(Inst::Send),
+            "sub" => Ok(Inst::Sub),
+            "yield" => Ok(Inst::Yield),
             _ => {
                 if s.starts_with("push") {
                     let mut parts = s.split_whitespace();
                     parts.next();
-                    let num = parts.next().expect("push requires argument");
-                    Inst::Push(if num.contains('.') {
-                        Op::Float(num.parse().unwrap())
+                    let num = parts
+                        .next()
+                        .ok_or_else(|| String::from("push requires argument"))?;
+                    Ok(Inst::Push(if num.contains('.') {
+                        Op::Float(num.parse().map_err(|e| format!("{}", e))?)
                     } else {
-                        Op::Int(num.parse().unwrap())
-                    })
+                        Op::Int(num.parse().map_err(|e| format!("{}", e))?)
+                    }))
                 } else {
-                    panic!("unknown instruction: {}", s);
+                    Err(format!("unknown instruction: {}", s))
                 }
             }
         }
@@ -370,20 +374,24 @@ mod tests {
 
     #[test]
     fn parse_instr() {
-        match Inst::from("nop") {
-            Inst::Nop => (),
+        match "nop".parse() {
+            Ok(Inst::Nop) => (),
             _ => panic!(),
         }
-        match Inst::from("yield") {
-            Inst::Yield => (),
+        match "yield".parse() {
+            Ok(Inst::Yield) => (),
             _ => panic!(),
         }
-        match Inst::from("push 123") {
-            Inst::Push(Op::Int(123)) => (),
+        match "push 123".parse() {
+            Ok(Inst::Push(Op::Int(123))) => (),
             _ => panic!(),
         }
-        match Inst::from("push 12.3") {
-            Inst::Push(Op::Float(f)) if f == 12.3 => (),
+        match "push 12.3".parse() {
+            Ok(Inst::Push(Op::Float(f))) if f == 12.3 => (),
+            _ => panic!(),
+        }
+        match "invalid".parse::<Inst>() {
+            Err(e) => assert_eq!(e, "unknown instruction: invalid"),
             _ => panic!(),
         }
     }

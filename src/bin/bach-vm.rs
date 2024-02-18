@@ -58,14 +58,19 @@ fn main() {
 
     // Read the rest of the program.
     let mut prog = Program::new();
+    let mut line_num = 0;
     for line in lines {
+        line_num += 1;
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
         if let Some(seqinst) = SeqInst::from(line.as_str(), vmstate.clone()) {
             prog.push(seqinst.into());
         } else {
-            prog.push(line.as_str().into());
+            match line.as_str().parse() {
+                Ok(inst) => prog.push(inst),
+                Err(e) => panic!("line {}: {}", line_num, e),
+            }
         }
     }
 

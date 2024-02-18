@@ -2,6 +2,7 @@
 
 use crate::Result;
 use std::fmt::{self, Display};
+use std::str::FromStr;
 
 /// Duration of a note.
 #[derive(Clone, Debug, PartialEq)]
@@ -17,7 +18,7 @@ pub enum Duration {
     End,
 }
 
-impl std::str::FromStr for Duration {
+impl FromStr for Duration {
     type Err = String;
     fn from_str(s: &str) -> Result<Self> {
         if s == "*" {
@@ -60,7 +61,7 @@ pub enum Note {
     // TODO: more
 }
 
-impl std::str::FromStr for Note {
+impl FromStr for Note {
     type Err = String;
     fn from_str(s: &str) -> Result<Self> {
         if s.starts_with('@') {
@@ -175,7 +176,7 @@ impl From<&Velocity> for u8 {
     }
 }
 
-impl std::str::FromStr for Velocity {
+impl FromStr for Velocity {
     type Err = String;
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
