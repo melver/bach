@@ -1,9 +1,10 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 use crate::Result;
+use std::fmt::{self, Display};
 
 /// Duration of a note.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Duration {
     /// Raw ticks of the sequencer.
     Ticks(u64),
@@ -31,7 +32,18 @@ impl From<&str> for Duration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+impl Display for Duration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Duration::Ticks(t) => write!(f, "{}t", t),
+            Duration::Beats(beats, bpb) => write!(f, "{}/{}", beats, bpb),
+            Duration::Begin => write!(f, "*"),
+            Duration::End => write!(f, "-"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Note {
     /// Raw MIDI note.
     Raw(u8),
@@ -49,6 +61,15 @@ impl From<&str> for Note {
             Note::Maj(parts[0].parse().unwrap(), parts[1].parse().unwrap())
         } else {
             panic!("unknown note: {}", s);
+        }
+    }
+}
+
+impl Display for Note {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Note::Raw(v) => write!(f, "@{}", v),
+            Note::Maj(key, offset) => write!(f, "maj@{}:{}", key, offset),
         }
     }
 }
@@ -102,7 +123,7 @@ impl From<&Note> for Result<u8> {
 }
 
 /// Common note velocities.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Velocity {
     Raw(u8),
     None,
@@ -153,6 +174,25 @@ impl From<&str> for Velocity {
             "fff" => Velocity::Fff,
             "ffff" => Velocity::Ffff,
             _ => panic!("unknown velocity: {}", s),
+        }
+    }
+}
+
+impl Display for Velocity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Velocity::Raw(v) => write!(f, "@{}", v),
+            Velocity::None => write!(f, "-"),
+            Velocity::Pppp => write!(f, "pppp"),
+            Velocity::Ppp => write!(f, "ppp"),
+            Velocity::Pp => write!(f, "pp"),
+            Velocity::P => write!(f, "p"),
+            Velocity::Mp => write!(f, "mp"),
+            Velocity::Mf => write!(f, "mf"),
+            Velocity::F => write!(f, "f"),
+            Velocity::Ff => write!(f, "ff"),
+            Velocity::Fff => write!(f, "fff"),
+            Velocity::Ffff => write!(f, "ffff"),
         }
     }
 }

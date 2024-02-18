@@ -4,8 +4,10 @@ use bach::ga::{self, Genome};
 use bach::sequencer;
 use bach::units::*;
 use rand::{rngs::ThreadRng, Rng};
+use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashSet;
+use std::fmt::{self, Display};
 use std::fs;
 use std::io::{self, BufRead, Write};
 
@@ -73,7 +75,7 @@ static mut CONFIG: Config = Config {
     channels: (0, 3),
     beats_per_bar: 8,
     note_scale: Note::Maj(60, 0),
-    song_init_len: 32,
+    song_init_len: 20,
     population_size: 12,
     mutation_probability: 0.2,
     tournament_size: 4,
@@ -85,7 +87,7 @@ fn cfg() -> &'static Config {
     unsafe { &CONFIG }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum SeqCommand {
     Jmp(isize),
     QueueNote(u8, Note, Velocity, Duration),
@@ -93,10 +95,35 @@ enum SeqCommand {
     Advance(Duration),
 }
 
+impl Display for SeqCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SeqCommand::Jmp(offset) => write!(f, "# repeat <{}>", offset),
+            SeqCommand::QueueNote(chan, note, velocity, duration) => {
+                write!(f, "n {} {} {} {}", chan, note, velocity, duration)
+            }
+            SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
+                for note in notes {
+                    writeln!(f, ". {}", note)?;
+                }
+                write!(
+                    f,
+                    "s {} {} {} {} {} {}",
+                    chan, velocity, duration, pulses, len, offset
+                )
+            }
+            SeqCommand::Advance(duration) => {
+                write!(f, "+ {}", duration)
+            }
+        }
+    }
+}
+
 struct Song {
     pub cmds: Vec<SeqCommand>,
     pub init: bool,
     pub fitness: Option<f32>,
+    pub comment: String,
 }
 
 impl From<Vec<SeqCommand>> for Song {
@@ -105,6 +132,7 @@ impl From<Vec<SeqCommand>> for Song {
             cmds: v,
             init: true,
             fitness: None,
+            comment: String::new(),
         }
     }
 }
@@ -121,6 +149,7 @@ impl Default for Song {
             cmds: vec![SeqCommand::Jmp(0); cfg().song_init_len],
             init: false,
             fitness: None,
+            comment: String::new(),
         }
     }
 }
@@ -226,7 +255,6 @@ impl Song {
 
 impl Genome for Song {
     fn with_blueprint(mut self, _blueprint: &Self) -> Self {
-        // Idempotent writes.
         if !self.init {
             // From default().
             self.mutate(1.0);
@@ -245,20 +273,26 @@ impl Genome for Song {
                 continue;
             }
 
-            self.cmds[idx] = match self.cmds[idx] {
+            self.cmds[idx] = match &self.cmds[idx] {
                 SeqCommand::Jmp(_) | SeqCommand::Advance(_) => self.gen_cmd(&mut rng),
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
                     match rng.gen_range(0..=3) {
-                        0 => {
-                            SeqCommand::QueueNote(chan, self.gen_note(&mut rng), velocity, duration)
-                        }
-                        1 => {
-                            SeqCommand::QueueNote(chan, note, self.gen_velocity(&mut rng), duration)
-                        }
+                        0 => SeqCommand::QueueNote(
+                            *chan,
+                            self.gen_note(&mut rng),
+                            velocity.clone(),
+                            duration.clone(),
+                        ),
+                        1 => SeqCommand::QueueNote(
+                            *chan,
+                            note.clone(),
+                            self.gen_velocity(&mut rng),
+                            duration.clone(),
+                        ),
                         2 => SeqCommand::QueueNote(
-                            chan,
-                            note,
-                            velocity,
+                            *chan,
+                            note.clone(),
+                            velocity.clone(),
                             self.gen_duration(&mut rng, false),
                         ),
                         3 => self.gen_cmd(&mut rng),
@@ -275,39 +309,39 @@ impl Genome for Song {
                     offset,
                 ) => match rng.gen_range(0..=4) {
                     0 => SeqCommand::QueueSequence(
-                        chan,
+                        *chan,
                         self.gen_note_list(&mut rng),
-                        velocity,
-                        duration,
-                        pulses,
-                        len,
-                        offset,
+                        velocity.clone(),
+                        duration.clone(),
+                        *pulses,
+                        *len,
+                        *offset,
                     ),
                     1 => SeqCommand::QueueSequence(
-                        chan,
+                        *chan,
                         notes.clone(),
                         self.gen_velocity(&mut rng),
-                        duration,
-                        pulses,
-                        len,
-                        offset,
+                        duration.clone(),
+                        *pulses,
+                        *len,
+                        *offset,
                     ),
                     2 => SeqCommand::QueueSequence(
-                        chan,
+                        *chan,
                         notes.clone(),
-                        velocity,
+                        velocity.clone(),
                         self.gen_duration(&mut rng, true),
-                        pulses,
-                        len,
-                        offset,
+                        *pulses,
+                        *len,
+                        *offset,
                     ),
                     3 => {
                         let eucl_params = self.gen_euclidean_params(&mut rng);
                         SeqCommand::QueueSequence(
-                            chan,
+                            *chan,
                             notes.clone(),
-                            velocity,
-                            duration,
+                            velocity.clone(),
+                            duration.clone(),
                             eucl_params.0,
                             eucl_params.1,
                             eucl_params.2,
@@ -337,7 +371,7 @@ impl Genome for Song {
     }
 }
 
-fn prompt_user(prompt: &str) -> String {
+fn prompt(prompt: &str) -> String {
     print!("{} ", prompt);
     io::stdout().flush().unwrap();
     let mut cmd = String::new();
@@ -346,10 +380,10 @@ fn prompt_user(prompt: &str) -> String {
 }
 
 struct Prog {
-    midi_file: fs::File,
-    clock: sequencer::TickClock,
-    seq: sequencer::MidiSequencer,
-    pool: ga::GenomePool<Song>,
+    midi_file: RefCell<fs::File>,
+    clock: RefCell<sequencer::TickClock>,
+    seq: RefCell<sequencer::MidiSequencer>,
+    pool: RefCell<ga::GenomePool<Song>>,
 }
 
 impl Prog {
@@ -369,112 +403,193 @@ impl Prog {
             .expect("must provide MIDI output device");
 
         Self {
-            midi_file: fs::OpenOptions::new().write(true).open(midi_path).unwrap(),
-            clock: sequencer::TickClock::new(bpm, ppqn),
-            seq: sequencer::MidiSequencer::new(),
-            pool: ga::GenomePool::new(
+            midi_file: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
+            clock: RefCell::new(sequencer::TickClock::new(bpm, ppqn)),
+            seq: RefCell::new(sequencer::MidiSequencer::new()),
+            pool: RefCell::new(ga::GenomePool::new(
                 Song::default(),
                 cfg().population_size,
                 cfg().mutation_probability,
-            ),
+            )),
         }
     }
 
-    fn run(&mut self) {
-        loop {
-            if prompt_user(">") == "quit" {
-                break;
+    fn advance(&self, duration: &Duration) {
+        let mut clock = self.clock.borrow_mut();
+        let mut seq = self.seq.borrow_mut();
+        let mut midi_file = self.midi_file.borrow_mut();
+
+        let until_tick = match clock.into_ticks(duration) {
+            Some(t) => seq.tick + t,
+            _ => unreachable!(),
+        };
+        while seq.tick != until_tick {
+            let midi_bytes = seq.tick(&clock);
+            clock.await_tick();
+            midi_file.write_all(&midi_bytes).unwrap();
+            midi_file.flush().unwrap();
+        }
+    }
+
+    fn play(&self, song: &Song) {
+        let mut cmd_idx: isize = 0;
+        let mut skip_cmd = HashSet::new();
+        while cmd_idx < song.cmds.len() as isize {
+            let seq_cmd = &song.cmds[cmd_idx as usize];
+            cmd_idx += 1;
+
+            if !skip_cmd.contains(&cmd_idx) {
+                println!("# <{}> ", cmd_idx);
+                println!("{}", seq_cmd);
             }
 
-            let mut selection = self.pool.select_uniform(cfg().tournament_size);
-            for song_ref in &selection {
-                let song = &mut self.pool[song_ref];
-                if song.1.is_eval() {
-                    println!("already evald: {}", song.1.fitness.unwrap());
-                    continue;
+            match seq_cmd {
+                SeqCommand::Jmp(offset) => {
+                    if skip_cmd.insert(cmd_idx) {
+                        cmd_idx = cmp::max(0, cmd_idx + *offset);
+                    }
                 }
-                println!("gen: {}, cmds: {:?}", song.0, song.1.cmds);
-                let mut cmd_idx: isize = 0;
-                let mut consumed_jmp = HashSet::new();
-                while cmd_idx <= song.1.cmds.len() as isize {
-                    let seq_cmd = if cmd_idx < song.1.cmds.len() as isize {
-                        &song.1.cmds[cmd_idx as usize]
-                    } else {
-                        &SeqCommand::Advance(Duration::Beats(2, 1))
-                    };
-
-                    cmd_idx += 1;
-
-                    println!("{}: {:?}", cmd_idx, seq_cmd);
-                    match seq_cmd {
-                        SeqCommand::Jmp(offset) => {
-                            if consumed_jmp.insert(cmd_idx) {
-                                cmd_idx = cmp::max(0, cmd_idx + *offset);
-                            }
-                        }
-                        SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                            match self.seq.queue(&self.clock, *chan, note, velocity, duration) {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    // Just keep playing anyway.
-                                    println!("WARNING: {}", e);
-                                }
-                            }
-                        }
-                        SeqCommand::QueueSequence(
-                            chan,
-                            notes,
-                            velocity,
-                            duration,
-                            pulses,
-                            len,
-                            offset,
-                        ) => {
-                            let eucl_seq = sequencer::euclidean_sequence(*pulses, *len, *offset);
-                            self.seq
-                                .queue_sequence(
-                                    &self.clock,
-                                    *chan,
-                                    notes,
-                                    velocity,
-                                    duration,
-                                    &eucl_seq,
-                                    true,
-                                )
-                                .unwrap();
-                        }
-                        SeqCommand::Advance(duration) => {
-                            let until_tick = match self.clock.into_ticks(duration) {
-                                Some(t) => self.seq.tick + t,
-                                _ => unreachable!(),
-                            };
-                            while self.seq.tick != until_tick {
-                                let midi_bytes = self.seq.tick(&self.clock);
-                                self.clock.await_tick();
-                                self.midi_file.write_all(&midi_bytes).unwrap();
-                                self.midi_file.flush().unwrap();
-                            }
+                SeqCommand::QueueNote(chan, note, velocity, duration) => {
+                    match self.seq.borrow_mut().queue(
+                        &self.clock.borrow(),
+                        *chan,
+                        note,
+                        velocity,
+                        duration,
+                    ) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            // Just keep playing anyway.
+                            println!("# warning: {}", e);
                         }
                     }
                 }
-                self.midi_file.write_all(&self.seq.stop()).unwrap();
-                self.clock.reset();
-                let song_fitness = prompt_user("fitness>").parse().unwrap();
-                song.1.fitness = Some(song_fitness);
+                SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
+                    let eucl_seq = sequencer::euclidean_sequence(*pulses, *len, *offset);
+                    self.seq
+                        .borrow_mut()
+                        .queue_sequence(
+                            &self.clock.borrow(),
+                            *chan,
+                            notes,
+                            velocity,
+                            duration,
+                            &eucl_seq,
+                            true,
+                        )
+                        .unwrap();
+                }
+                SeqCommand::Advance(duration) => self.advance(duration),
+            }
+        }
+        // Allow it to complete some of the sequences.
+        println!("# end song");
+        self.advance(&Duration::Beats(3, 1));
+        self.stop();
+    }
+
+    fn stop(&self) {
+        // Stop all still playing notes.
+        let stop_cmds = self.seq.borrow_mut().stop();
+        let mut midi_file = self.midi_file.borrow_mut();
+        midi_file.write_all(&stop_cmds).unwrap();
+        self.clock.borrow_mut().reset();
+    }
+
+    /// Return true if program should keep running, false otherwise.
+    fn cmd_prompt(&self, mut song: Option<&mut Song>) -> bool {
+        loop {
+            let prompt_str = match &song {
+                Some(s) => format!("song[{}]>", s.cmds.len()),
+                None => ">>>".into(),
+            };
+            let cmd = prompt(&prompt_str);
+
+            match &mut song {
+                Some(s) => {
+                    if cmd == "q" {
+                        return false;
+                    } else if cmd == "b" {
+                        return true;
+                    } else if cmd == "p" {
+                        self.play(s);
+                    } else if let Some(suffix) = cmd.strip_prefix("f ") {
+                        match suffix.parse() {
+                            Ok(f) => s.fitness = Some(f),
+                            Err(e) => println!("invalid argument: {}", e),
+                        }
+                    } else {
+                        if !cmd.is_empty() {
+                            println!("unknown command: {}", cmd);
+                        }
+                        println!("help [song]:");
+                        println!("  b      : back");
+                        println!("  f <val>: assign fitness value");
+                        println!("  p      : play");
+                        println!("  q      : quit");
+                    }
+                }
+                None => {
+                    if cmd == "q" {
+                        return false;
+                    } else if cmd == "c" {
+                        return true;
+                    } else {
+                        if !cmd.is_empty() {
+                            println!("unknown command: {}", cmd);
+                        }
+                        println!("help [main]:");
+                        println!("  c: continue");
+                        println!("  h: help");
+                        println!("  q: quit");
+                    }
+                }
+            }
+        }
+    }
+
+    fn run(&self) {
+        loop {
+            println!(":: generation {}", self.pool.borrow().generation());
+            if !self.cmd_prompt(None) {
+                break;
             }
 
-            self.pool.sort_selection(&mut selection);
+            let mut pool = self.pool.borrow_mut();
+            let mut selection = pool.select_uniform(cfg().tournament_size);
+
+            for song_ref in &selection {
+                let song = &mut pool[song_ref];
+                if song.1.is_eval() {
+                    continue;
+                }
+                assert!(song.1.fitness.is_none());
+                println!(
+                    "# begin song[{}] | generation: {} | {}",
+                    song.1.cmds.len(),
+                    song.0,
+                    song.1.comment,
+                );
+                self.play(&song.1);
+                while song.1.fitness.is_none() {
+                    println!(":: please provide fitness");
+                    if !self.cmd_prompt(Some(&mut song.1)) {
+                        return;
+                    }
+                }
+            }
+
+            pool.sort_selection(&mut selection);
             let mates = &selection[0..cfg().tournament_winners];
             let replace = &selection[cfg().tournament_winners..];
-            self.pool.step(mates, replace);
+            pool.step(mates, replace);
         }
     }
 }
 
 impl Drop for Prog {
     fn drop(&mut self) {
-        // Stop all still playing notes.
-        self.midi_file.write_all(&self.seq.stop()).unwrap();
+        self.stop();
     }
 }
 

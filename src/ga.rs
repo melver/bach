@@ -123,6 +123,11 @@ impl<G: Genome + Default> GenomePool<G> {
         self
     }
 
+    /// View of the current population.
+    pub fn population(&self) -> &[(u64, G)] {
+        &self.population
+    }
+
     /// Return the current generation.
     pub fn generation(&self) -> u64 {
         self.generation

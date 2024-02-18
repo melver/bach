@@ -30,12 +30,16 @@ fn main() {
     let mut clock = sequencer::TickClock::new(bpm, ppqn);
     let mut seq = sequencer::MidiSequencer::new();
     let mut note_stack = Vec::new();
+    let mut skip_allocated = false;
 
     let mut line_num = 0;
     for line in io::BufReader::new(file).lines().flatten() {
         line_num += 1;
-        if line.starts_with('#') {
+        if line.trim().is_empty() || line.starts_with('#') {
             continue;
+        } else if let Some(suffix) = line.strip_prefix(".skip_allocated ") {
+            let val: u8 = suffix.parse().unwrap();
+            skip_allocated = val != 0;
         } else if let Some(suffix) = line.strip_prefix("+ ") {
             let tick_delta: Duration = suffix.into();
             let until_tick = match clock.into_ticks(&tick_delta) {
@@ -79,7 +83,7 @@ fn main() {
                 &velocity,
                 &duration,
                 &sequence,
-                false,
+                skip_allocated,
             ) {
                 Ok(()) => {}
                 Err(e) => {
@@ -88,7 +92,7 @@ fn main() {
             }
             note_stack.clear();
         } else {
-            panic!("unknown statement: {}", line);
+            panic!("line {}: unknown statement: {}", line_num, line);
         }
     }
 
