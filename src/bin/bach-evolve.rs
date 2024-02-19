@@ -636,7 +636,7 @@ impl Prog {
                     if let Some(suffix) = cmd.strip_prefix("bpm") {
                         let mut clock = self.clock.borrow_mut();
                         if suffix.is_empty() {
-                            println!("current BPM: {}", clock.bpm);
+                            println!("BPM: {}", clock.bpm);
                         } else {
                             match suffix.trim().parse() {
                                 Ok(val) => {
@@ -695,6 +695,24 @@ impl Prog {
                                 }
                             }
                         }
+                    } else if let Some(suffix) = cmd.strip_prefix("mut") {
+                        let mut pool = self.pool.borrow_mut();
+                        if suffix.is_empty() {
+                            println!("mutation probability: {}", pool.mut_prob);
+                        } else {
+                            match suffix.trim().parse() {
+                                Ok(val) => {
+                                    if val >= 0.0 && val <= 1.0 {
+                                        pool.mut_prob = val;
+                                    } else {
+                                        println!(
+                                            "mutation probability must be between 0.0 and 1.0"
+                                        );
+                                    }
+                                }
+                                Err(e) => println!("invalid mutation probability: {}", e),
+                            }
+                        }
                     } else if cmd == "q" {
                         return false;
                     } else if let Some(suffix) = cmd.strip_prefix("s ") {
@@ -747,6 +765,7 @@ impl Prog {
                         println!("  e <idx>     : edit clip");
                         println!("  i           : info");
                         println!("  l           : load population");
+                        println!("  mut <val>   : change mutation probability");
                         println!("  q           : quit");
                         println!("  s <idx>,... : play chained clips (song mode)");
                         println!("  w           : write population");
