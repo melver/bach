@@ -546,8 +546,8 @@ impl Prog {
     fn cmd_prompt(&self, mut clip: Option<&mut ClipGenome>) -> bool {
         loop {
             let prompt_str = match &clip {
-                Some(clip) => format!("[clip@{}]>>", clip.fitness_as_str()),
-                None => "[main]>>".into(),
+                Some(clip) => format!("clip[{}]={}>>", clip.clip.len(), clip.fitness_as_str()),
+                None => ">>>".into(),
             };
             let cmd = prompt(&prompt_str);
 
@@ -674,8 +674,9 @@ impl Prog {
                         for idx in 0..pool.population().len() {
                             let clip = &pool.population()[idx];
                             println!(
-                                "<{}> fitness {}, generation {} :: {}",
+                                "<{}> length {}, fitness {}, generation {} :: {}",
                                 idx,
+                                clip.1.clip.len(),
                                 clip.1.fitness_as_str(),
                                 clip.0,
                                 clip.1.comment
