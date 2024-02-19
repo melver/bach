@@ -82,13 +82,13 @@ fn main() {
             }
             SeqCommand::QueueNote(c, n, v, d) => {
                 if let Err(e) = seq.queue(&clock, *c, n, v, d) {
-                    println!(":: warning: {}", e);
+                    println!("<! failed to queue: {}", e);
                 }
             }
             SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
                 let eucl = sequencer::euclidean_sequence(*p, *l, *o);
                 if let Err(e) = seq.queue_sequence(&clock, *c, ns, v, d, &eucl, skip_allocated) {
-                    println!(":: warning: {}", e);
+                    println!("<! failed to queue: {}", e);
                 }
             }
         }
