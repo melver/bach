@@ -784,7 +784,7 @@ impl Prog {
 
             let mut pool = self.pool.borrow_mut();
             let mut selection = pool.select_uniform(cfg().tournament_size);
-            println!("<- evaluating generation {}", pool.generation());
+            println!("<- advancing to generation {}", pool.generation() + 1);
             for clip_ref in &selection {
                 let clip = &mut pool[clip_ref];
                 if clip.1.is_eval() {
@@ -806,6 +806,7 @@ impl Prog {
             let mates = &selection[0..cfg().tournament_winners];
             let replace = &selection[cfg().tournament_winners..];
             pool.step(mates, replace);
+            println!("<- advanced to generation {}", pool.generation());
         }
     }
 }
