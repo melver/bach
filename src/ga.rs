@@ -128,6 +128,11 @@ impl<G: Genome + Default> GenomePool<G> {
         &self.population
     }
 
+    /// Mutable view of the current population.
+    pub fn population_mut(&mut self) -> &mut [(u64, G)] {
+        &mut self.population
+    }
+
     /// Return the current generation.
     pub fn generation(&self) -> u64 {
         self.generation

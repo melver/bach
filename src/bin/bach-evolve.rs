@@ -639,10 +639,14 @@ impl Prog {
                         match suffix.parse::<usize>() {
                             Ok(idx) => {
                                 let mut pool = self.pool.borrow_mut();
-                                let selection = pool.select_all();
-                                if idx >= selection.len() {
-                                    println!("index out of bounds: {} >= {}", idx, selection.len());
-                                } else if !self.cmd_prompt(Some(&mut pool[&selection[idx]].1)) {
+                                let population = pool.population_mut();
+                                if idx >= population.len() {
+                                    println!(
+                                        "index out of bounds: {} >= {}",
+                                        idx,
+                                        population.len()
+                                    );
+                                } else if !self.cmd_prompt(Some(&mut population[idx].1)) {
                                     return false;
                                 }
                             }
@@ -666,11 +670,10 @@ impl Prog {
                             println!("no population path set");
                         } else {
                             let mut pool = self.pool.borrow_mut();
-                            let selection = pool.select_all();
-                            for idx in 0..pool.population().len() {
-                                let clip = &mut pool[&selection[idx]].1;
+                            let population = pool.population_mut();
+                            for (idx, clip) in population.iter_mut().enumerate() {
                                 let path = cfg().population_path().join(format!("{}.ch", idx));
-                                if let Err(e) = clip.deserialize(&path) {
+                                if let Err(e) = clip.1.deserialize(&path) {
                                     println!("could not load file {}: {}", path.display(), e);
                                     break;
                                 }
