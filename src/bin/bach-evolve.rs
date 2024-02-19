@@ -633,7 +633,23 @@ impl Prog {
                     }
                 }
                 None => {
-                    if cmd == "c" {
+                    if let Some(suffix) = cmd.strip_prefix("bpm") {
+                        let mut clock = self.clock.borrow_mut();
+                        if suffix.is_empty() {
+                            println!("current BPM: {}", clock.bpm);
+                        } else {
+                            match suffix.trim().parse() {
+                                Ok(val) => {
+                                    if val != 0 {
+                                        clock.bpm = val;
+                                    } else {
+                                        println!("cannot set BPM to 0");
+                                    }
+                                }
+                                Err(e) => println!("invalid BPM: {}", e),
+                            }
+                        }
+                    } else if cmd == "c" {
                         return true;
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
                         match suffix.parse::<usize>() {
@@ -726,6 +742,7 @@ impl Prog {
                             println!("unknown command: {}", cmd);
                         }
                         println!("main help:");
+                        println!("  bpm <val>   : change BPM");
                         println!("  c           : continue");
                         println!("  e <idx>     : edit clip");
                         println!("  i           : info");
