@@ -21,7 +21,7 @@ use std::thread;
 struct Config {
     channels: (u8, u8),
     beats_per_bar: u32,
-    note_scale: Note,
+    note_scale: Vec<Note>,
     skip_allocated: bool,
     clip_init_len: usize,
     clip_tail: Duration,
@@ -33,7 +33,10 @@ struct Config {
 }
 
 impl Config {
-    fn read_from_file(&mut self) {
+    fn init(&mut self) {
+        // Defaults that need to allocate and can't be done statically.
+        self.note_scale = vec![Note::Maj(60, 0)];
+
         let path = std::env::args().nth(1).expect("must provide config file");
         if path == "-" {
             return;
@@ -49,7 +52,8 @@ impl Config {
             } else if let Some(suffix) = line.strip_prefix("beats_per_bar ") {
                 self.beats_per_bar = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
-                self.note_scale = suffix.parse().unwrap();
+                self.note_scale = suffix.split(',').map(|s| s.parse().unwrap()).collect();
+                assert!(!self.note_scale.is_empty());
             } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
@@ -78,10 +82,11 @@ impl Config {
         self.beats_per_bar.ilog2()
     }
 
-    fn map_note(&self, note: i8) -> Note {
-        match cfg().note_scale {
-            Note::Raw(_) => Note::Raw(note as u8),
-            Note::Maj(k, _) => Note::Maj(k, note),
+    fn map_note(&self, chan: u8, note: i8) -> Note {
+        let note_scale = &cfg().note_scale;
+        match note_scale[chan as usize % note_scale.len()] {
+            Note::Raw(o) => Note::Raw(o + note as u8),
+            Note::Maj(k, o) => Note::Maj(k, o + note),
         }
     }
 
@@ -93,7 +98,7 @@ impl Config {
 static mut CONFIG: Config = Config {
     channels: (0, 3),
     beats_per_bar: 8,
-    note_scale: Note::Maj(60, 0),
+    note_scale: vec![],
     skip_allocated: false,
     clip_init_len: 20,
     clip_tail: Duration::Beats(3, 1),
@@ -213,24 +218,24 @@ impl ClipGenome {
         rng.gen_range(cfg().channels.0..=cfg().channels.1)
     }
 
-    fn gen_note(&self, rng: &mut ThreadRng) -> Note {
+    fn gen_note(&self, chan: u8, rng: &mut ThreadRng) -> Note {
         // Skew probility to middle octaves.
         let x = rng.gen_range(-1.0..=1.0);
-        let note_offset = if rng.gen_bool(0.8) {
+        let note_offset = if rng.gen_bool(0.9) {
             x * 7.9
         } else {
             let y = rng.gen_range(-1.0..=1.0);
             x * y * 30.9
         } as i8;
-        let note = cfg().map_note(note_offset);
+        let note = cfg().map_note(chan, note_offset);
         // Detect invalid notes early.
         assert!(Result::from(&note).is_ok(), "try a different scale");
         note
     }
 
-    fn gen_note_list(&self, rng: &mut ThreadRng) -> Vec<Note> {
+    fn gen_note_list(&self, chan: u8, rng: &mut ThreadRng) -> Vec<Note> {
         (0..rng.gen_range(1..10))
-            .map(|_| self.gen_note(rng))
+            .map(|_| self.gen_note(chan, rng))
             .collect()
     }
 
@@ -257,10 +262,10 @@ impl ClipGenome {
         if only_beats {
             beats
         } else {
-            match rng.gen_range(0..=100) {
+            match rng.gen_range(0..100) {
                 0..=9 => Duration::Begin,
                 10..=19 => Duration::End,
-                20..=100 => beats,
+                20..=99 => beats,
                 _ => unreachable!(),
             }
         }
@@ -269,8 +274,8 @@ impl ClipGenome {
     fn gen_euclidean_params(&self, rng: &mut ThreadRng) -> (u32, u32, u32) {
         // Constants from Godfried's paper.
         loop {
-            let pulses = rng.gen_range(2..=13);
-            let len = rng.gen_range(pulses..=24);
+            let pulses = rng.gen_range(2..=16);
+            let len = rng.gen_range(pulses..=32);
             let offset = rng.gen_range(0..len);
             if pulses < len / 4 {
                 // Too few pulses, try again.
@@ -281,19 +286,23 @@ impl ClipGenome {
     }
 
     fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
-        match rng.gen_range(0..=100) {
+        match rng.gen_range(0..100) {
             0..=4 => SeqCommand::Jmp(rng.gen_range(-15..=5)),
-            5..=9 => SeqCommand::QueueNote(
-                self.gen_channel(rng),
-                self.gen_note(rng),
-                self.gen_velocity(rng),
-                self.gen_duration(rng, false),
-            ),
-            10..=42 => {
+            5..=9 => {
+                let chan = self.gen_channel(rng);
+                SeqCommand::QueueNote(
+                    chan,
+                    self.gen_note(chan, rng),
+                    self.gen_velocity(rng),
+                    self.gen_duration(rng, false),
+                )
+            }
+            10..=39 => {
+                let chan = self.gen_channel(rng);
                 let eucl_params = self.gen_euclidean_params(rng);
                 SeqCommand::QueueSequence(
-                    self.gen_channel(rng),
-                    self.gen_note_list(rng),
+                    chan,
+                    self.gen_note_list(chan, rng),
                     self.gen_velocity(rng),
                     self.gen_duration(rng, true),
                     eucl_params.0,
@@ -301,7 +310,7 @@ impl ClipGenome {
                     eucl_params.2,
                 )
             }
-            43..=100 => SeqCommand::Tick(self.gen_duration(rng, true)),
+            40..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
             _ => unreachable!(),
         }
     }
@@ -333,7 +342,7 @@ impl Genome for ClipGenome {
                     match rng.gen_range(0..=3) {
                         0 => SeqCommand::QueueNote(
                             *chan,
-                            self.gen_note(&mut rng),
+                            self.gen_note(*chan, &mut rng),
                             velocity.clone(),
                             duration.clone(),
                         ),
@@ -364,7 +373,7 @@ impl Genome for ClipGenome {
                 ) => match rng.gen_range(0..=4) {
                     0 => SeqCommand::QueueSequence(
                         *chan,
-                        self.gen_note_list(&mut rng),
+                        self.gen_note_list(*chan, &mut rng),
                         velocity.clone(),
                         duration.clone(),
                         *pulses,
@@ -482,8 +491,9 @@ impl Prog {
 
     fn play(&self, clip: &ClipGenome) {
         println!("<- begin clip; {}", clip.comment);
-        let mut cmd_idx: isize = 0;
         let mut skip_cmd = HashSet::new();
+        let mut cmd_idx: isize = 0;
+        let mut silence = true;
         while cmd_idx < clip.clip.len() as isize {
             if !is_running() {
                 return;
@@ -495,7 +505,13 @@ impl Prog {
             }
 
             match seq_cmd {
-                SeqCommand::Tick(delta) => self.tick_until(delta),
+                SeqCommand::Tick(delta) => {
+                    if silence {
+                        println!("<- skipping silence");
+                    } else {
+                        self.tick_until(delta);
+                    }
+                }
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
                         cmd_idx = cmp::max(0, cmd_idx + *offset);
@@ -528,6 +544,14 @@ impl Prog {
                     }
                 }
             }
+
+            // Skip initial silence. A jump does count as a non-silence, and can be used to
+            // deliberately introduce silence at the beginning.
+            silence = if let SeqCommand::Tick(_) = seq_cmd {
+                silence
+            } else {
+                false
+            };
 
             cmd_idx += 1;
         }
@@ -823,7 +847,7 @@ impl Drop for Prog {
 
 fn main() {
     unsafe {
-        CONFIG.read_from_file();
+        CONFIG.init();
     }
 
     let mut signals = Signals::new([SIGINT]).unwrap();
