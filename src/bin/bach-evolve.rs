@@ -6,7 +6,7 @@ use bach::units::*;
 use bach::Result;
 use rand::{rngs::ThreadRng, Rng};
 use signal_hook::{consts::SIGINT, iterator::Signals};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
@@ -449,6 +449,8 @@ struct Prog {
     clock: RefCell<sequencer::TickClock>,
     seq: RefCell<sequencer::MidiSequencer>,
     pool: RefCell<ga::GenomePool<ClipGenome>>,
+    /// Auto-evaluate until generation.
+    eval_until: Cell<u64>,
 }
 
 impl Prog {
@@ -476,6 +478,7 @@ impl Prog {
                 cfg().population_size,
                 cfg().mutation_probability,
             )),
+            eval_until: Cell::new(0),
         }
     }
 
@@ -517,26 +520,24 @@ impl Prog {
                         cmd_idx = cmp::max(0, cmd_idx + *offset);
                     }
                 }
-                SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                    if let Err(e) = self.seq.borrow_mut().queue(
-                        &self.clock.borrow(),
-                        *chan,
-                        note,
-                        velocity,
-                        duration,
-                    ) {
+                SeqCommand::QueueNote(c, n, v, d) => {
+                    if let Err(e) = self
+                        .seq
+                        .borrow_mut()
+                        .queue(&self.clock.borrow(), *c, n, v, d)
+                    {
                         // Just keep playing.
                         println!("<! failed to queue: {}", e);
                     }
                 }
-                SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
-                    let eucl_seq = sequencer::euclidean_sequence(*pulses, *len, *offset);
+                SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
+                    let eucl_seq = sequencer::euclidean_sequence(*p, *l, *o);
                     if let Err(e) = self.seq.borrow_mut().queue_sequence(
                         &self.clock.borrow(),
-                        *chan,
-                        notes,
-                        velocity,
-                        duration,
+                        *c,
+                        ns,
+                        v,
+                        d,
                         &eucl_seq,
                         cfg().skip_allocated,
                     ) {
@@ -559,6 +560,57 @@ impl Prog {
         println!("<- end clip");
         self.tick_until(&cfg().clip_tail);
         // Do not stop() here, so that chained clips sound smoother.
+    }
+
+    fn eval(&self, clip: &mut ClipGenome) {
+        let mut fitness = 1.0;
+        let mut skip_cmd = HashSet::new();
+        let mut cmd_idx: isize = 0;
+        while cmd_idx < clip.clip.len() as isize {
+            match &clip.clip[cmd_idx as usize] {
+                SeqCommand::Tick(_) => {
+                    //TODO:
+                }
+                SeqCommand::Jmp(offset) => {
+                    if skip_cmd.insert(cmd_idx) {
+                        cmd_idx = cmp::max(0, cmd_idx + *offset);
+                    }
+                }
+                SeqCommand::QueueNote(c, n, v, d) => {
+                    if self
+                        .seq
+                        .borrow_mut()
+                        .queue(&self.clock.borrow(), *c, n, v, d)
+                        .is_err()
+                    {
+                        fitness /= 2.0;
+                    }
+                }
+                SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
+                    let eucl_seq = sequencer::euclidean_sequence(*p, *l, *o);
+                    if self
+                        .seq
+                        .borrow_mut()
+                        .queue_sequence(
+                            &self.clock.borrow(),
+                            *c,
+                            ns,
+                            v,
+                            d,
+                            &eucl_seq,
+                            cfg().skip_allocated,
+                        )
+                        .is_err()
+                    {
+                        fitness /= 2.0;
+                    }
+                }
+            }
+
+            cmd_idx += 1;
+        }
+
+        clip.fitness = Some(fitness);
     }
 
     fn stop(&self) {
@@ -661,7 +713,13 @@ impl Prog {
                     }
                 }
                 None => {
-                    if let Some(suffix) = cmd.strip_prefix("bpm") {
+                    if let Some(suffix) = cmd.strip_prefix("a ") {
+                        match suffix.parse() {
+                            Ok(gen) => self.eval_until.set(gen),
+                            Err(e) => println!("<! invalid generation: {}", e),
+                        }
+                        return true;
+                    } else if let Some(suffix) = cmd.strip_prefix("bpm") {
                         let mut clock = self.clock.borrow_mut();
                         if suffix.is_empty() {
                             println!("BPM: {}", clock.bpm);
@@ -789,6 +847,7 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("main help:");
+                        println!("  a <gen>     : auto-evolve until generation");
                         println!("  bpm <val>   : change BPM");
                         println!("  c           : continue");
                         println!("  e <idx>     : edit clip");
@@ -805,12 +864,21 @@ impl Prog {
     }
 
     fn run(&self) {
+        let mut auto_eval = false;
         loop {
-            if !self.cmd_prompt(None) {
+            if !auto_eval && !self.cmd_prompt(None) {
                 break;
             }
 
             let mut pool = self.pool.borrow_mut();
+            if pool.generation() < self.eval_until.get() && is_running() {
+                auto_eval = true;
+            } else if auto_eval {
+                // Auto eval has finished. Back to the main prompt.
+                auto_eval = false;
+                continue;
+            }
+
             let mut selection = pool.select_uniform(cfg().tournament_size);
             println!("<- advancing to generation {}", pool.generation() + 1);
             for clip_ref in &selection {
@@ -819,13 +887,18 @@ impl Prog {
                     continue;
                 }
                 assert!(clip.1.fitness.is_none());
-                println!("<- evaluating clip from generation {}", clip.0,);
-                self.play(&clip.1);
-                self.stop();
-                while clip.1.fitness.is_none() {
-                    println!("<? please set fitness");
-                    if !self.cmd_prompt(Some(&mut clip.1)) {
-                        return;
+                println!("<- evaluating clip from generation {}", clip.0);
+
+                if auto_eval {
+                    self.eval(&mut clip.1);
+                } else {
+                    self.play(&clip.1);
+                    self.stop();
+                    while clip.1.fitness.is_none() {
+                        println!("<? please set fitness");
+                        if !self.cmd_prompt(Some(&mut clip.1)) {
+                            return;
+                        }
                     }
                 }
             }
