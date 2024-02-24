@@ -931,13 +931,27 @@ impl Prog {
                                 clip.1.comment
                             );
                         }
-                    } else if cmd == "l" {
+                    } else if let Some(suffix) = cmd.strip_prefix("l ") {
+                        let limit = if suffix == "*" {
+                            usize::MAX
+                        } else {
+                            match suffix.parse() {
+                                Ok(val) => val,
+                                Err(e) => {
+                                    println!("<! invalid count: {}", e);
+                                    0
+                                }
+                            }
+                        };
                         if cfg().population_path.is_empty() {
                             println!("<! no population path set");
                         } else {
                             let mut pool = self.pool.borrow_mut();
                             let population = pool.population_mut();
                             for (idx, clip) in population.iter_mut().enumerate() {
+                                if idx >= limit {
+                                    break;
+                                }
                                 let path = cfg().population_path().join(format!("{}.ch", idx));
                                 if let Err(e) = clip.1.deserialize(&path) {
                                     println!("<! could not load file {}: {}", path.display(), e);
@@ -1015,7 +1029,7 @@ impl Prog {
                         println!("  c           : continue");
                         println!("  e <idx>     : edit clip");
                         println!("  i           : info");
-                        println!("  l           : load population");
+                        println!("  l <count>   : load population");
                         println!("  mut <val>   : change mutation probability");
                         println!("  q           : quit");
                         println!("  s <idx>,... : play chained clips (song mode)");
