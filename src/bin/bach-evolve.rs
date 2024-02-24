@@ -492,6 +492,15 @@ impl Prog {
         });
     }
 
+    fn stop(&self) {
+        // Stop all still playing notes.
+        let stop_clip = self.seq.borrow_mut().stop();
+        let mut midi_file = self.midi_file.borrow_mut();
+        midi_file.write_all(&stop_clip).unwrap();
+        midi_file.flush().unwrap();
+        self.clock.borrow_mut().reset();
+    }
+
     fn play(&self, clip: &ClipGenome) {
         println!("<- begin clip; {}", clip.comment);
         let mut skip_cmd = HashSet::new();
@@ -521,24 +530,21 @@ impl Prog {
                     }
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
-                    if let Err(e) = self
-                        .seq
-                        .borrow_mut()
-                        .queue(&self.clock.borrow(), *c, n, v, d)
-                    {
-                        // Just keep playing.
-                        println!("<! failed to queue: {}", e);
+                    let mut seq = self.seq.borrow_mut();
+                    if let Err(e) = seq.queue(&self.clock.borrow(), *c, n, v, d) {
+                        println!("<! failed to queue: {}", e); // Just keep playing.
                     }
                 }
                 SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
-                    let eucl_seq = sequencer::euclidean_sequence(*p, *l, *o);
+                    let eucl = sequencer::euclidean_sequence(*p, *l, *o);
+                    let clock = self.clock.borrow();
                     if let Err(e) = self.seq.borrow_mut().queue_sequence(
-                        &self.clock.borrow(),
+                        &clock,
                         *c,
                         ns,
                         v,
                         d,
-                        &eucl_seq,
+                        &eucl,
                         cfg().skip_allocated,
                     ) {
                         println!("<! failed to queue: {}", e);
@@ -559,17 +565,25 @@ impl Prog {
         // Allow it to complete some of the sequences.
         println!("<- end clip");
         self.tick_until(&cfg().clip_tail);
-        // Do not stop() here, so that chained clips sound smoother.
+
+        // Do not stop() here, so that chained clips sound smoother. Need to explicitly call
+        // stop() where needed.
     }
 
+    /// Evaluate the fitness of a clip without manual feedback based on some generic heuristics of
+    /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
         let mut fitness = 1.0;
         let mut skip_cmd = HashSet::new();
         let mut cmd_idx: isize = 0;
         while cmd_idx < clip.clip.len() as isize {
             match &clip.clip[cmd_idx as usize] {
-                SeqCommand::Tick(_) => {
-                    //TODO:
+                SeqCommand::Tick(delta) => {
+                    // We still have to forward the sequencer to accurately detect if there are
+                    // errors when we try to queue notes.
+                    let mut clock = self.clock.borrow_mut();
+                    let mut seq = self.seq.borrow_mut();
+                    seq.forward_until(&mut clock, delta, &mut |_| ());
                 }
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
@@ -577,32 +591,20 @@ impl Prog {
                     }
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
-                    if self
-                        .seq
-                        .borrow_mut()
-                        .queue(&self.clock.borrow(), *c, n, v, d)
-                        .is_err()
-                    {
-                        fitness /= 2.0;
+                    let mut seq = self.seq.borrow_mut();
+                    if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
+                        fitness *= 0.8;
                     }
                 }
                 SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
-                    let eucl_seq = sequencer::euclidean_sequence(*p, *l, *o);
-                    if self
-                        .seq
-                        .borrow_mut()
-                        .queue_sequence(
-                            &self.clock.borrow(),
-                            *c,
-                            ns,
-                            v,
-                            d,
-                            &eucl_seq,
-                            cfg().skip_allocated,
-                        )
+                    let eucl = sequencer::euclidean_sequence(*p, *l, *o);
+                    let clock = self.clock.borrow();
+                    let mut seq = self.seq.borrow_mut();
+                    if seq
+                        .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
                         .is_err()
                     {
-                        fitness /= 2.0;
+                        fitness *= 0.8;
                     }
                 }
             }
@@ -611,13 +613,9 @@ impl Prog {
         }
 
         clip.fitness = Some(fitness);
-    }
 
-    fn stop(&self) {
-        // Stop all still playing notes.
-        let stop_clip = self.seq.borrow_mut().stop();
-        let mut midi_file = self.midi_file.borrow_mut();
-        midi_file.write_all(&stop_clip).unwrap();
+        // Reset single instance of sequencer and clock.
+        let _ = self.seq.borrow_mut().stop();
         self.clock.borrow_mut().reset();
     }
 
@@ -756,7 +754,10 @@ impl Prog {
                         }
                     } else if cmd == "i" {
                         let pool = self.pool.borrow();
-                        println!("on generation: {}", pool.generation());
+                        println!("generation: {}", pool.generation());
+                        println!("mean fitness: {}", pool.mean_fitness());
+                        println!("best fitness: {}", pool.best_fitness());
+                        println!("worst fitness: {}", pool.worst_fitness());
                         for idx in 0..pool.population().len() {
                             let clip = &pool.population()[idx];
                             println!(
@@ -907,7 +908,11 @@ impl Prog {
             let mates = &selection[0..cfg().tournament_winners];
             let replace = &selection[cfg().tournament_winners..];
             pool.step(mates, replace);
-            println!("<- advanced to generation {}", pool.generation());
+            println!(
+                "<- advanced to generation {} with mean fitness {}",
+                pool.generation(),
+                pool.mean_fitness()
+            );
         }
     }
 }

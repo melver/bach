@@ -140,27 +140,36 @@ impl<G: Genome + Default> GenomePool<G> {
 
     /// Return the mean fitness value.
     pub fn mean_fitness(&self) -> f32 {
-        self.population.iter().fold(0.0, |a, b| a + b.1.fitness()) / (self.population.len() as f32)
+        let evald: Vec<f32> = self
+            .population
+            .iter()
+            .filter(|g| g.1.is_eval())
+            .map(|g| g.1.fitness())
+            .collect();
+
+        if evald.is_empty() {
+            0.0
+        } else {
+            evald.iter().fold(0.0, |a, b| a + b) / (evald.len() as f32)
+        }
     }
 
     /// Return the current worst fitness.
     pub fn worst_fitness(&self) -> f32 {
         self.population
             .iter()
+            .filter(|g| g.1.is_eval())
             .max_by(|a, b| a.1.cmp(&b.1))
-            .unwrap()
-            .1
-            .fitness()
+            .map_or(0.0, |g| g.1.fitness())
     }
 
     /// Return the current best fitness.
     pub fn best_fitness(&self) -> f32 {
         self.population
             .iter()
+            .filter(|g| g.1.is_eval())
             .min_by(|a, b| a.1.cmp(&b.1))
-            .unwrap()
-            .1
-            .fitness()
+            .map_or(0.0, |g| g.1.fitness())
     }
 
     /// Return vector of unique indices into population, where `get_idx` returns indices (such as

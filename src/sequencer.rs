@@ -196,6 +196,25 @@ impl MidiSequencer {
         }
     }
 
+    pub fn forward_until<F>(
+        &mut self,
+        tick_clock: &mut TickClock,
+        delta: &Duration,
+        send_midi: &mut F,
+    ) where
+        F: FnMut(&[u8]),
+    {
+        let until_tick = match tick_clock.into_ticks(delta) {
+            Some(t) => self.tick + t,
+            _ => panic!("not a valid tick delta: {}", delta),
+        };
+        while self.tick != until_tick {
+            let midi_bytes = self.tick(tick_clock);
+            tick_clock.forward_tick(1);
+            send_midi(&midi_bytes);
+        }
+    }
+
     /// Queue note messages based on raw MIDI parameters.
     fn queue_raw(
         &mut self,
