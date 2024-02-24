@@ -25,6 +25,7 @@ struct Config {
     skip_allocated: bool,
     clip_init_len: usize,
     clip_tail: Duration,
+    clip_fixed_len: bool,
     population_size: usize,
     mutation_probability: f32,
     tournament_size: usize,
@@ -58,6 +59,8 @@ impl Config {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
                 self.clip_init_len = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("clip_fixed_len ") {
+                self.clip_fixed_len = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_tail ") {
                 self.clip_tail = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_size ") {
@@ -101,6 +104,7 @@ static mut CONFIG: Config = Config {
     note_scale: vec![],
     skip_allocated: false,
     clip_init_len: 30,
+    clip_fixed_len: true,
     clip_tail: Duration::Beats(3, 1),
     population_size: 64,
     mutation_probability: 0.02,
@@ -272,7 +276,6 @@ impl ClipGenome {
     }
 
     fn gen_euclidean_params(&self, rng: &mut ThreadRng) -> (u32, u32, u32) {
-        // Constants from Godfried's paper.
         loop {
             let pulses = rng.gen_range(2..=16);
             let len = rng.gen_range(pulses..=32);
@@ -287,8 +290,8 @@ impl ClipGenome {
 
     fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
         match rng.gen_range(0..100) {
-            0..=4 => SeqCommand::Jmp(rng.gen_range(-15..=5)),
-            5..=14 => {
+            0..=7 => SeqCommand::Jmp(rng.gen_range(-20..=5)),
+            8..=19 => {
                 let chan = self.gen_channel(rng);
                 SeqCommand::QueueNote(
                     chan,
@@ -297,7 +300,7 @@ impl ClipGenome {
                     self.gen_duration(rng, false),
                 )
             }
-            15..=42 => {
+            20..=49 => {
                 let chan = self.gen_channel(rng);
                 let eucl_params = self.gen_euclidean_params(rng);
                 SeqCommand::QueueSequence(
@@ -310,7 +313,7 @@ impl ClipGenome {
                     eucl_params.2,
                 )
             }
-            43..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
+            50..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
             _ => unreachable!(),
         }
     }
@@ -424,9 +427,14 @@ impl Genome for ClipGenome {
     }
 
     fn crossover(&self, other: &Self, mut_prob: f32) -> Vec<Self> {
-        ga::default_crossover(self, other, mut_prob, true, false, &mut |len| {
-            rand::thread_rng().gen_range(0..len)
-        })
+        ga::default_crossover(
+            self,
+            other,
+            mut_prob,
+            true,
+            cfg().clip_fixed_len,
+            &mut |len| rand::thread_rng().gen_range(0..len),
+        )
     }
 
     fn is_eval(&self) -> bool {
