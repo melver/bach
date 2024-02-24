@@ -765,16 +765,19 @@ impl Prog {
         // Normalize fitness against length.
         if sheet.is_empty() {
             // Remove them instantly.
-            fitness = -100000.0;
+            fitness = -1e6;
         } else {
-            // Prefer shorter but higher quality sequences.
+            // Prefer shorter but higher density sequences.
             fitness /= 1.0 + (sheet.len() as f32).log(1.2);
         }
 
-        if sheet.len() > 1000 {
+        if clip.clip.len() > 150 {
             // Things will become slow if too large. But we also don't want to discard the
             // information in potentially good genomes, so just slightly penalize them.
-            multiplier *= 0.8;
+            //
+            // It can still get to long clips by using jumps (which are also penalized a little to
+            // avoid too much repetition).
+            multiplier *= 0.9;
         }
 
         assert_ne!(fitness, f32::INFINITY);
