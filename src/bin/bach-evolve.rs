@@ -24,6 +24,7 @@ struct Config {
     note_scale: Note,
     skip_allocated: bool,
     clip_init_len: usize,
+    clip_tail: Duration,
     population_size: usize,
     mutation_probability: f32,
     tournament_size: usize,
@@ -53,6 +54,8 @@ impl Config {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
                 self.clip_init_len = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("clip_tail ") {
+                self.clip_tail = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_size ") {
                 self.population_size = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("mutation_probability ") {
@@ -93,6 +96,7 @@ static mut CONFIG: Config = Config {
     note_scale: Note::Maj(60, 0),
     skip_allocated: false,
     clip_init_len: 20,
+    clip_tail: Duration::Beats(3, 1),
     population_size: 12,
     mutation_probability: 0.2,
     tournament_size: 4,
@@ -529,7 +533,7 @@ impl Prog {
         }
         // Allow it to complete some of the sequences.
         println!("<- end clip");
-        self.tick_until(&Duration::Beats(3, 1));
+        self.tick_until(&cfg().clip_tail);
         // Do not stop() here, so that chained clips sound smoother.
     }
 

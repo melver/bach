@@ -33,10 +33,14 @@ impl FromStr for Duration {
             ))
         } else {
             let parts: Vec<&str> = s.split('/').collect();
-            Ok(Duration::Beats(
-                parts[0].parse().map_err(|e| format!("{}", e))?,
-                parts[1].parse().map_err(|e| format!("{}", e))?,
-            ))
+            if parts.len() == 2 {
+                Ok(Duration::Beats(
+                    parts[0].parse().map_err(|e| format!("{}", e))?,
+                    parts[1].parse().map_err(|e| format!("{}", e))?,
+                ))
+            } else {
+                Err(format!("invalid duration: {}", s))
+            }
         }
     }
 }
