@@ -23,7 +23,7 @@ fn main() {
         .expect("not a valid integer");
     let file_name = std::env::args().nth(3).expect("must provide input file");
     let script = File::open(file_name).unwrap();
-    let mut lines = io::BufReader::new(script).lines().flatten();
+    let mut lines = io::BufReader::new(script).lines().map(|l| l.unwrap());
 
     // Get scale and time signature first.
     let mut map_note: Option<Box<dyn Fn(i8) -> Note>> = None;

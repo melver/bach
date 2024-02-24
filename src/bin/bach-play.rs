@@ -48,7 +48,7 @@ fn main() {
     let mut skip_allocated = false;
 
     let mut line_num = 0;
-    for line in io::BufReader::new(input_file).lines().flatten() {
+    for line in io::BufReader::new(input_file).lines().map(|l| l.unwrap()) {
         line_num += 1;
         if line.trim().is_empty() || line.starts_with('#') {
             continue;

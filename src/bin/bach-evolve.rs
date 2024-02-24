@@ -39,7 +39,7 @@ impl Config {
         }
 
         let file = fs::File::open(path).unwrap();
-        for line in io::BufReader::new(file).lines().flatten() {
+        for line in io::BufReader::new(file).lines().map(|l| l.unwrap()) {
             if line.starts_with('#') {
                 continue;
             } else if let Some(suffix) = line.strip_prefix("channels ") {
@@ -173,7 +173,7 @@ impl ClipGenome {
         let file = fs::File::open(path).map_err(|e| format!("{}", e))?;
         let mut line_num = 0;
         let mut clip: sequencer::Clip = vec![];
-        for line in io::BufReader::new(file).lines().flatten() {
+        for line in io::BufReader::new(file).lines().map(|l| l.unwrap()) {
             line_num += 1;
             if let Some(suffix) = line.strip_prefix("# comment: ") {
                 self.comment = suffix.into();
