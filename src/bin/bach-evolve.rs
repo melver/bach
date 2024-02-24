@@ -8,7 +8,7 @@ use rand::{rngs::ThreadRng, Rng};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -96,14 +96,14 @@ impl Config {
 }
 
 static mut CONFIG: Config = Config {
-    channels: (0, 3),
+    channels: (0, 2),
     beats_per_bar: 8,
     note_scale: vec![],
     skip_allocated: false,
-    clip_init_len: 20,
+    clip_init_len: 30,
     clip_tail: Duration::Beats(3, 1),
-    population_size: 12,
-    mutation_probability: 0.2,
+    population_size: 64,
+    mutation_probability: 0.02,
     tournament_size: 4,
     tournament_winners: 2,
     population_path: String::new(),
@@ -225,7 +225,7 @@ impl ClipGenome {
             x * 7.9
         } else {
             let y = rng.gen_range(-1.0..=1.0);
-            x * y * 30.9
+            x * y * 14.9
         } as i8;
         let note = cfg().map_note(chan, note_offset);
         // Detect invalid notes early.
@@ -288,7 +288,7 @@ impl ClipGenome {
     fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
         match rng.gen_range(0..100) {
             0..=4 => SeqCommand::Jmp(rng.gen_range(-15..=5)),
-            5..=9 => {
+            5..=14 => {
                 let chan = self.gen_channel(rng);
                 SeqCommand::QueueNote(
                     chan,
@@ -297,7 +297,7 @@ impl ClipGenome {
                     self.gen_duration(rng, false),
                 )
             }
-            10..=39 => {
+            15..=42 => {
                 let chan = self.gen_channel(rng);
                 let eucl_params = self.gen_euclidean_params(rng);
                 SeqCommand::QueueSequence(
@@ -310,7 +310,7 @@ impl ClipGenome {
                     eucl_params.2,
                 )
             }
-            40..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
+            43..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
             _ => unreachable!(),
         }
     }
@@ -573,50 +573,212 @@ impl Prog {
     /// Evaluate the fitness of a clip without manual feedback based on some generic heuristics of
     /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
-        let mut fitness = 1.0;
-        let mut skip_cmd = HashSet::new();
-        let mut cmd_idx: isize = 0;
-        while cmd_idx < clip.clip.len() as isize {
-            match &clip.clip[cmd_idx as usize] {
-                SeqCommand::Tick(delta) => {
-                    // We still have to forward the sequencer to accurately detect if there are
-                    // errors when we try to queue notes.
-                    let mut clock = self.clock.borrow_mut();
-                    let mut seq = self.seq.borrow_mut();
-                    seq.forward_until(&mut clock, delta, &mut |_| ());
+        let mut multiplier = 1.0;
+
+        // Translate into nicer representation to analyze. Each element corresponds to the shortest
+        // beat, and each entry contains a list of notes that are playing.
+        let sheet = {
+            let mut sheet: Vec<Vec<Note>> = vec![];
+            let mut cur_beat: u32 = 0;
+            let mut insert_sheet = |idx: u32, note: Note| {
+                let idx_ = idx as usize;
+                if idx_ >= sheet.len() {
+                    sheet.resize(idx_ + 1, vec![]);
                 }
-                SeqCommand::Jmp(offset) => {
-                    if skip_cmd.insert(cmd_idx) {
-                        cmd_idx = cmp::max(0, cmd_idx + *offset);
+                sheet[idx_].push(note);
+            };
+            let mut skip_cmd = HashSet::new();
+            let mut cmd_idx: isize = 0;
+            while cmd_idx < clip.clip.len() as isize {
+                match &clip.clip[cmd_idx as usize] {
+                    SeqCommand::Tick(delta) => {
+                        // We still have to forward the sequencer to accurately detect if there are
+                        // errors when we try to queue notes.
+                        let mut clock = self.clock.borrow_mut();
+                        let mut seq = self.seq.borrow_mut();
+                        seq.forward_until(&mut clock, delta, &mut |_| ());
+                        match delta {
+                            Duration::Beats(b, bpb) if *bpb == cfg().beats_per_bar => {
+                                cur_beat += *b
+                            }
+                            _ => panic!("unexpected delta: {}", delta),
+                        }
+                    }
+                    SeqCommand::Jmp(offset) => {
+                        if skip_cmd.insert(cmd_idx) {
+                            cmd_idx = cmp::max(0, cmd_idx + *offset);
+                        }
+                        // Too many jumps can easily make it boring.
+                        multiplier *= 0.95;
+                    }
+                    SeqCommand::QueueNote(c, n, v, d) => {
+                        let mut seq = self.seq.borrow_mut();
+                        if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
+                            multiplier *= 0.9;
+                        } else if let Duration::Beats(beats, _) = d {
+                            for b in 0..*beats {
+                                insert_sheet(cur_beat + b, n.clone());
+                            }
+                        } else {
+                            // Penalize untimed starts and stops.
+                            multiplier *= 0.9;
+                        }
+                    }
+                    SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
+                        let eucl = sequencer::euclidean_sequence(*p, *l, *o);
+                        let clock = self.clock.borrow();
+                        let mut seq = self.seq.borrow_mut();
+                        if seq
+                            .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
+                            .is_err()
+                        {
+                            multiplier *= 0.9;
+                        } else if let Duration::Beats(beats, _) = d {
+                            let mut notes = ns.iter().cycle();
+                            let mut beat_offset = 0;
+                            for &pulse in &eucl {
+                                if pulse {
+                                    let note = notes.next().unwrap();
+                                    for b in 0..*beats {
+                                        insert_sheet(cur_beat + beat_offset + b, note.clone());
+                                    }
+                                }
+                                beat_offset += beats;
+                            }
+                        } else {
+                            panic!("{}", d);
+                        }
                     }
                 }
-                SeqCommand::QueueNote(c, n, v, d) => {
-                    let mut seq = self.seq.borrow_mut();
-                    if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
-                        fitness *= 0.8;
-                    }
-                }
-                SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
-                    let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                    let clock = self.clock.borrow();
-                    let mut seq = self.seq.borrow_mut();
-                    if seq
-                        .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
-                        .is_err()
-                    {
-                        fitness *= 0.8;
+
+                cmd_idx += 1;
+            }
+            // Reset single instance of sequencer and clock.
+            let _ = self.seq.borrow_mut().stop();
+            self.clock.borrow_mut().reset();
+            // Make it learn to insert "advance" at the end.
+            sheet.resize(cur_beat as usize + 1, vec![]);
+            assert_eq!(cur_beat as usize + 1, sheet.len());
+            sheet
+        };
+
+        // Now we can analyze the flattened view of sequenced notes.
+        let mut fitness = 0.0;
+
+        // The harmony table assigns scores to note intervals (in semitone offsets).
+        let harmony_table = HashMap::from([
+            (0, -0.20),
+            (1, 0.05),
+            (2, 0.05),
+            (3, 0.50),
+            (4, 0.50),
+            (5, 0.30),
+            (6, -0.10),
+            (7, 0.50),
+            (8, 0.10),
+            (9, 0.40),
+            (10, -0.02),
+            (11, -0.02),
+            (12, 0.10),
+            (13, -0.05),
+            (14, 0.05),
+            (15, 0.05),
+            (16, 0.50),
+            (17, 0.50),
+            (18, 0.30),
+            (19, -0.10),
+            (20, 0.50),
+            (21, 0.10),
+            (22, 0.40),
+            (23, -0.02),
+            (24, -0.02),
+            (25, 0.10),
+        ]);
+
+        // Calculate harmony score for simultanous notes (chords)
+        fitness += {
+            let mut chord_score = 0.0;
+            for beat_notes in &sheet {
+                for i in 0..beat_notes.len() {
+                    let note1 = &beat_notes[i];
+                    for note2 in beat_notes.iter().skip(i + 1) {
+                        let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
+                        let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
+                        let diff = (raw1 - raw2).abs();
+                        match harmony_table.get(&diff) {
+                            // Divide by the size of this chord, so that it prefers smaller but
+                            // overall better sounding chords.
+                            Some(score) => {
+                                let difficulty = beat_notes.len() as f32;
+                                if *score > 0.0 {
+                                    chord_score += score / difficulty;
+                                } else {
+                                    chord_score += score * difficulty;
+                                }
+                            }
+                            // Warn, so we may add the missing data in future.
+                            None => {
+                                multiplier *= 0.9;
+                                println!("<! no harmony score for interval of {}", diff);
+                            }
+                        }
                     }
                 }
             }
+            chord_score
+        };
 
-            cmd_idx += 1;
+        // Calculate harmony score for non-simultaneous notes (melody/arp).
+        fitness += {
+            let mut melody_score = 0.0;
+            for i in 1..sheet.len() {
+                let beat_notes1 = &sheet[i - 1];
+                let beat_notes2 = &sheet[i];
+                for note1 in beat_notes1 {
+                    for note2 in beat_notes2 {
+                        let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
+                        let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
+                        let diff = (raw1 - raw2).abs();
+                        match harmony_table.get(&diff) {
+                            Some(score) => {
+                                let difficulty = (beat_notes1.len() + beat_notes2.len()) as f32;
+                                if *score > 0.0 {
+                                    melody_score += score / difficulty;
+                                } else {
+                                    melody_score += score;
+                                }
+                            }
+                            None => {
+                                multiplier *= 0.9;
+                                println!("<! no harmony score for interval of {}", diff);
+                            }
+                        }
+                    }
+                }
+            }
+            melody_score
+        };
+
+        // Penalize too many rests.
+        fitness -= (sheet.iter().filter(|e| e.is_empty()).count() as f32) / (sheet.len() as f32);
+
+        // Normalize fitness against length.
+        if sheet.is_empty() {
+            // Remove them instantly.
+            fitness = -100000.0;
+        } else {
+            // Prefer shorter but higher quality sequences.
+            fitness /= 1.0 + (sheet.len() as f32).log(1.2);
         }
 
-        clip.fitness = Some(fitness);
+        if sheet.len() > 1000 {
+            // Things will become slow if too large. But we also don't want to discard the
+            // information in potentially good genomes, so just slightly penalize them.
+            multiplier *= 0.8;
+        }
 
-        // Reset single instance of sequencer and clock.
-        let _ = self.seq.borrow_mut().stop();
-        self.clock.borrow_mut().reset();
+        assert_ne!(fitness, f32::INFINITY);
+        clip.fitness = Some(multiplier * fitness);
     }
 
     /// Return true if program should keep running, false otherwise.

@@ -5,6 +5,7 @@
 //
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+// This is defined by the MIDI spec.
 pub const CLOCKS_PER_QN: u32 = 24;
 
 /// Raw abstracted MIDI commands.

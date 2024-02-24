@@ -74,8 +74,16 @@ impl TickClock {
     /// MIDI BPM is quarter notes per minute; PPQN is pulses per quarter note.
     pub fn new(bpm: u32, ppqn: u32) -> Self {
         assert!(bpm > 0, "BPM cannot be 0");
-        assert!(ppqn >= CLOCKS_PER_QN, "PPQN must be greater or equal to 24");
-        assert!(ppqn % CLOCKS_PER_QN == 0, "PPQN must be divisible by 24");
+        assert!(
+            ppqn >= CLOCKS_PER_QN,
+            "PPQN must be greater or equal to {}",
+            CLOCKS_PER_QN
+        );
+        assert!(
+            ppqn % CLOCKS_PER_QN == 0,
+            "PPQN must be divisible by {}",
+            CLOCKS_PER_QN
+        );
         TickClock {
             bpm,
             ppqn,
@@ -382,7 +390,7 @@ impl Default for MidiSequencer {
 
 // === Clips ===================================================================
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SeqCommand {
     Tick(Duration),
     Jmp(isize),
