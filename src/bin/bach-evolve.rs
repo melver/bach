@@ -329,6 +329,9 @@ impl Genome for ClipGenome {
         let mut rng = rand::thread_rng();
         let mut used = HashSet::new();
         let mut to_mutate = (self.clip.len() as f32 * mut_prob) as usize;
+        if to_mutate == 0 && rng.gen_bool(mut_prob as f64) {
+            to_mutate = 1;
+        }
         while to_mutate != 0 {
             let idx = rng.gen_range(0..self.clip.len());
             if !used.insert(idx) {
