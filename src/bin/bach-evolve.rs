@@ -583,6 +583,13 @@ impl Prog {
     /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
         let mut multiplier = 1.0;
+        if clip.clip.len() > 150 {
+            // Things will become slow if too large. But we also don't want to discard the
+            // information in potentially good genomes, so just slightly penalize them.
+            //
+            // It can still get to long clips by using jumps.
+            multiplier *= 0.95;
+        }
 
         // Translate into nicer representation to analyze. Each element corresponds to the shortest
         // beat, and each entry contains a list of notes that are playing.
@@ -668,6 +675,12 @@ impl Prog {
             assert_eq!(cur_beat as usize + 1, sheet.len());
             sheet
         };
+
+        if sheet.len() < cfg().beats_per_bar as usize {
+            // Remove instantly. Also various calculations below assume sheet is non-empty.
+            clip.fitness = Some(-1e6);
+            return;
+        }
 
         // Now we can analyze the flattened view of sequenced notes.
         let mut fitness = 0.0;
@@ -823,22 +836,8 @@ impl Prog {
         };
 
         // Normalize fitness against length.
-        if sheet.is_empty() {
-            // Remove them instantly.
-            fitness = -1e6;
-        } else {
-            // Prefer shorter but higher density sequences.
-            fitness /= 1.0 + (sheet.len() as f32).log(1.2);
-        }
-
-        if clip.clip.len() > 150 {
-            // Things will become slow if too large. But we also don't want to discard the
-            // information in potentially good genomes, so just slightly penalize them.
-            //
-            // It can still get to long clips by using jumps (which are also penalized a little to
-            // avoid too much repetition).
-            multiplier *= 0.9;
-        }
+        // Prefer shorter but higher density sequences.
+        fitness /= 1.0 + (sheet.len() as f32).log(1.2);
 
         assert_ne!(fitness, f32::INFINITY);
         clip.fitness = Some(multiplier * fitness);
