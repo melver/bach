@@ -218,19 +218,23 @@ impl<G: Genome + Default> GenomePool<G> {
     }
 
     pub fn select_best(&self) -> GenomeRef {
-        let mut best = 0;
+        let mut best: Option<usize> = None;
 
-        for i in 1..self.population.len() {
-            let genome = &self.population[i];
+        for (idx, genome) in self.population.iter().enumerate() {
             if !genome.1.is_eval() {
                 continue;
             }
-            if let cmp::Ordering::Less = genome.1.cmp(&self.population[best].1) {
-                best = i;
+            match best {
+                Some(b) => {
+                    if let cmp::Ordering::Less = genome.1.cmp(&self.population[b].1) {
+                        best = Some(idx);
+                    }
+                }
+                None => best = Some(idx),
             }
         }
 
-        GenomeRef(self.get_tag(), best)
+        GenomeRef(self.get_tag(), best.unwrap())
     }
 
     /// Select all genomes in the current population. The order is the same as the underlying
