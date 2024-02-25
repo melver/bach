@@ -934,21 +934,28 @@ impl Prog {
                     } else if cmd == "c" {
                         return true;
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
-                        match suffix.parse::<usize>() {
-                            Ok(idx) => {
-                                let mut pool = self.pool.borrow_mut();
-                                let population = pool.population_mut();
-                                if idx >= population.len() {
-                                    println!(
-                                        "<! index out of bounds: {} >= {}",
-                                        idx,
-                                        population.len()
-                                    );
-                                } else if !self.cmd_prompt(Some(&mut population[idx].1)) {
-                                    return false;
-                                }
+                        let mut pool = self.pool.borrow_mut();
+                        if suffix == "best" {
+                            let best_ref = pool.select_best();
+                            if !self.cmd_prompt(Some(&mut pool[&best_ref].1)) {
+                                return false;
                             }
-                            Err(e) => println!("<! invalid index: {}", e),
+                        } else {
+                            match suffix.parse::<usize>() {
+                                Ok(idx) => {
+                                    let population = pool.population_mut();
+                                    if idx >= population.len() {
+                                        println!(
+                                            "<! index out of bounds: {} >= {}",
+                                            idx,
+                                            population.len()
+                                        );
+                                    } else if !self.cmd_prompt(Some(&mut population[idx].1)) {
+                                        return false;
+                                    }
+                                }
+                                Err(e) => println!("<! invalid index: {}", e),
+                            }
                         }
                     } else if cmd == "i" {
                         let pool = self.pool.borrow();

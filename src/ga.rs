@@ -222,6 +222,9 @@ impl<G: Genome + Default> GenomePool<G> {
 
         for i in 1..self.population.len() {
             let genome = &self.population[i];
+            if !genome.1.is_eval() {
+                continue;
+            }
             if let cmp::Ordering::Less = genome.1.cmp(&self.population[best].1) {
                 best = i;
             }
