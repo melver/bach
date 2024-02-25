@@ -617,8 +617,6 @@ impl Prog {
                         if skip_cmd.insert(cmd_idx) {
                             cmd_idx = cmp::max(0, cmd_idx + *offset);
                         }
-                        // Too many jumps can easily make it boring.
-                        multiplier *= 0.98;
                     }
                     SeqCommand::QueueNote(c, n, v, d) => {
                         let mut seq = self.seq.borrow_mut();
@@ -678,7 +676,7 @@ impl Prog {
         let harmony_table = HashMap::from([
             // Too many repeated same notes are uninteresting, but at the same time we do not want
             // to prevent longer held notes completely. Don't penalize diff of 0 too much.
-            (0, -0.03),
+            (0, -0.05),
             (1, 0.05),
             (2, 0.05),
             (3, 0.50),
@@ -805,7 +803,7 @@ impl Prog {
         // Penalize too many rests.
         fitness -= {
             let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
-            (rest_count as f32) / (sheet.len() as f32)
+            (rest_count as f32) / (sheet.len() as f32).log(2.0)
         };
 
         // Penalize duplicates: compute hashes of all time windows, and count unique hashes.
@@ -820,7 +818,8 @@ impl Prog {
                 let hash = hasher.finish();
                 *(window_counts.entry(hash).or_default()) += 1;
             }
-            (window_counts.iter().filter(|(_, &v)| v > 1).count() as f32) / (sheet.len() as f32)
+            let dups = window_counts.iter().filter(|(_, &v)| v > 1).count();
+            (dups as f32) / (sheet.len() as f32).log(2.0)
         };
 
         // Normalize fitness against length.
