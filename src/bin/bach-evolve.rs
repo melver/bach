@@ -286,7 +286,7 @@ impl ClipGenome {
 
     fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
         match rng.gen_range(0..100) {
-            0..=7 => SeqCommand::Jmp(rng.gen_range(-20..=5)),
+            0..=7 => SeqCommand::Jmp(rng.gen_range(-20..=0)),
             8..=19 => {
                 let chan = self.gen_channel(rng);
                 SeqCommand::QueueNote(
@@ -616,19 +616,19 @@ impl Prog {
                             cmd_idx = cmp::max(0, cmd_idx + *offset);
                         }
                         // Too many jumps can easily make it boring.
-                        multiplier *= 0.95;
+                        multiplier *= 0.98;
                     }
                     SeqCommand::QueueNote(c, n, v, d) => {
                         let mut seq = self.seq.borrow_mut();
                         if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
-                            multiplier *= 0.9;
+                            multiplier *= 0.95;
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
                                 insert_sheet(cur_beat + b, n.clone());
                             }
                         } else {
                             // Penalize untimed starts and stops.
-                            multiplier *= 0.9;
+                            multiplier *= 0.95;
                         }
                     }
                     SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
@@ -639,7 +639,7 @@ impl Prog {
                             .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
                             .is_err()
                         {
-                            multiplier *= 0.9;
+                            multiplier *= 0.95;
                         } else if let Duration::Beats(beats, _) = d {
                             let mut notes = ns.iter().cycle();
                             let mut beat_offset = 0;
@@ -674,7 +674,9 @@ impl Prog {
 
         // The harmony table assigns scores to note intervals (in semitone offsets).
         let harmony_table = HashMap::from([
-            (0, -0.20),
+            // Too many repeated same notes are uninteresting, but at the same time we do not want
+            // to prevent longer held notes completely. Don't penalize diff of 0 too much.
+            (0, -0.03),
             (1, 0.05),
             (2, 0.05),
             (3, 0.50),
@@ -740,12 +742,12 @@ impl Prog {
                         match harmony_table.get(&diff) {
                             // Divide by the size of this chord, so that it prefers smaller but
                             // overall better sounding chords.
-                            Some(score) => {
+                            Some(harmony) => {
                                 let difficulty = beat_notes.len() as f32;
-                                if *score > 0.0 {
-                                    chord_score += score / difficulty;
+                                if *harmony > 0.0 {
+                                    chord_score += harmony / difficulty;
                                 } else {
-                                    chord_score += score * difficulty;
+                                    chord_score += harmony * difficulty;
                                 }
                             }
                             // Warn, so we may add the missing data in future.
@@ -763,26 +765,33 @@ impl Prog {
         // Calculate harmony score for non-simultaneous notes (melody/arp).
         fitness += {
             let mut melody_score = 0.0;
-            for i in 1..sheet.len() {
-                let beat_notes1 = &sheet[i - 1];
-                let beat_notes2 = &sheet[i];
-                for note1 in beat_notes1 {
-                    for note2 in beat_notes2 {
-                        let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
-                        let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
-                        let diff = (raw1 - raw2).abs();
-                        match harmony_table.get(&diff) {
-                            Some(score) => {
-                                let difficulty = (beat_notes1.len() + beat_notes2.len()) as f32;
-                                if *score > 0.0 {
-                                    melody_score += score / difficulty;
-                                } else {
-                                    melody_score += score;
+            // How many notes to look back at. This can be useful to produce longer interesting
+            // sequences.
+            let scan_back = 2;
+            for i in scan_back..sheet.len() {
+                for back in 1..=scan_back {
+                    let beat_notes1 = &sheet[i - back];
+                    let beat_notes2 = &sheet[i];
+                    let total_notes = beat_notes1.len() + beat_notes2.len();
+                    for note1 in beat_notes1 {
+                        for note2 in beat_notes2 {
+                            let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
+                            let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
+                            let diff = (raw1 - raw2).abs();
+                            match harmony_table.get(&diff) {
+                                Some(harmony) => {
+                                    // Difficulty decreases the more notes we look back.
+                                    let difficulty = total_notes as f32 / back as f32;
+                                    if *harmony > 0.0 {
+                                        melody_score += harmony / difficulty;
+                                    } else {
+                                        melody_score += harmony * difficulty;
+                                    }
                                 }
-                            }
-                            None => {
-                                multiplier *= 0.9;
-                                println!("<! no harmony score for interval of {}", diff);
+                                None => {
+                                    multiplier *= 0.9;
+                                    println!("<! no harmony score for interval of {}", diff);
+                                }
                             }
                         }
                     }
@@ -792,7 +801,8 @@ impl Prog {
         };
 
         // Penalize too many rests.
-        fitness -= (sheet.iter().filter(|e| e.is_empty()).count() as f32) / (sheet.len() as f32);
+        let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
+        fitness -= 1.1 * rest_count as f32 / (sheet.len() as f32);
 
         // Normalize fitness against length.
         if sheet.is_empty() {
