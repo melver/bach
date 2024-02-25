@@ -29,7 +29,6 @@ struct Config {
     population_size: usize,
     mutation_probability: f32,
     tournament_size: usize,
-    tournament_winners: usize,
     population_path: String,
 }
 
@@ -69,8 +68,6 @@ impl Config {
                 self.mutation_probability = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("tournament_size ") {
                 self.tournament_size = suffix.parse().unwrap();
-            } else if let Some(suffix) = line.strip_prefix("tournament_winners ") {
-                self.tournament_winners = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_path ") {
                 self.population_path = suffix.into();
             } else {
@@ -108,8 +105,7 @@ static mut CONFIG: Config = Config {
     clip_tail: Duration::Beats(3, 1),
     population_size: 64,
     mutation_probability: 0.02,
-    tournament_size: 4,
-    tournament_winners: 2,
+    tournament_size: 2,
     population_path: String::new(),
 };
 
@@ -910,8 +906,9 @@ impl Prog {
                 }
                 None => {
                     if let Some(suffix) = cmd.strip_prefix("a ") {
-                        match suffix.parse() {
-                            Ok(gen) => self.eval_until.set(gen),
+                        let pool = self.pool.borrow();
+                        match suffix.parse::<u64>() {
+                            Ok(gen) => self.eval_until.set(pool.generation() + gen),
                             Err(e) => println!("<! invalid generation: {}", e),
                         }
                         return true;
@@ -1067,13 +1064,13 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  a <gen>     : auto-evolve until generation");
+                        println!("  a <count>   : auto-evolve next <count> generations");
                         println!("  bpm <val>   : change BPM");
                         println!("  c           : continue");
                         println!("  e <idx>     : edit clip");
                         println!("  i           : info");
-                        println!("  l <count>   : load population");
-                        println!("  mut <val>   : change mutation probability");
+                        println!("  l <count>   : load <count> genomes into population");
+                        println!("  mut <val>   : change mutation probability to <val>");
                         println!("  q           : quit");
                         println!("  s <idx>,... : play chained clips (song mode)");
                         println!("  w           : write population");
@@ -1099,7 +1096,9 @@ impl Prog {
                 continue;
             }
 
-            let mut selection = pool.select_uniform(cfg().tournament_size);
+            // One genome wins from a set of tournament_size, but we need 2 genomes to replace the
+            // deleted genome.
+            let selection = pool.select_uniform(cfg().tournament_size * 2);
             println!("<- advancing to generation {}", pool.generation() + 1);
             for clip_ref in &selection {
                 let clip = &mut pool[clip_ref];
@@ -1123,10 +1122,16 @@ impl Prog {
                 }
             }
 
-            pool.sort_selection(&mut selection);
-            let mates = &selection[0..cfg().tournament_winners];
-            let replace = &selection[cfg().tournament_winners..];
-            pool.step(mates, replace);
+            // Steady-state with tournament-selection and the delete oldest replacement strategy.
+            let mut mates = vec![];
+            for group in (0..selection.len()).step_by(cfg().tournament_size) {
+                let mut tournament = selection[group..group + cfg().tournament_size].to_vec();
+                pool.sort_selection(&mut tournament);
+                mates.push(*tournament.first().unwrap());
+            }
+            assert_eq!(mates.len(), 2);
+            let replace = &[pool.select_oldest()];
+            pool.step(&mates, replace);
             println!(
                 "<- advanced to generation {} with mean fitness {}",
                 pool.generation(),
