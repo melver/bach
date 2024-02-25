@@ -56,7 +56,7 @@ impl Display for Duration {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub enum Note {
     /// Raw MIDI note.
     Raw(u8),

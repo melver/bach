@@ -8,8 +8,10 @@ use rand::{rngs::ThreadRng, Rng};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
 use std::cmp;
+use std::collections::hash_map::DefaultHasher; // FIXME: use std::hash::DefaultHasher
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -801,8 +803,25 @@ impl Prog {
         };
 
         // Penalize too many rests.
-        let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
-        fitness -= 1.1 * rest_count as f32 / (sheet.len() as f32);
+        fitness -= {
+            let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
+            (rest_count as f32) / (sheet.len() as f32)
+        };
+
+        // Penalize duplicates: compute hashes of all time windows, and count unique hashes.
+        fitness -= {
+            let window_size = cfg().beats_per_bar as usize / 2;
+            let mut window_counts: HashMap<u64, usize> = HashMap::new();
+            for window_start in 0..=(sheet.len() - window_size) {
+                let mut hasher = DefaultHasher::new();
+                for beat in &sheet[window_start..(window_start + window_size)] {
+                    Hash::hash_slice(beat, &mut hasher);
+                }
+                let hash = hasher.finish();
+                *(window_counts.entry(hash).or_default()) += 1;
+            }
+            (window_counts.iter().filter(|(_, &v)| v > 1).count() as f32) / (sheet.len() as f32)
+        };
 
         // Normalize fitness against length.
         if sheet.is_empty() {
