@@ -1000,10 +1000,16 @@ impl Prog {
                             );
                         }
                     } else if let Some(suffix) = cmd.strip_prefix("l ") {
-                        let limit = if suffix == "*" {
+                        let parts: Vec<&str> = suffix.split(' ').collect();
+                        if parts.len() < 2 {
+                            println!("<! requires 2 arguments");
+                            continue;
+                        }
+
+                        let limit = if parts[0] == "*" {
                             usize::MAX
                         } else {
-                            match suffix.parse() {
+                            match parts[0].parse() {
                                 Ok(val) => val,
                                 Err(e) => {
                                     println!("<! invalid count: {}", e);
@@ -1011,16 +1017,20 @@ impl Prog {
                                 }
                             }
                         };
+
                         if cfg().population_path.is_empty() {
                             println!("<! no population path set");
                         } else {
+                            let file_prefix = parts[1];
                             let mut pool = self.pool.borrow_mut();
                             let population = pool.population_mut();
                             for (idx, clip) in population.iter_mut().enumerate() {
                                 if idx >= limit {
                                     break;
                                 }
-                                let path = cfg().population_path().join(format!("{}.ch", idx));
+                                let path = cfg()
+                                    .population_path()
+                                    .join(format!("{}_{}.ch", file_prefix, idx));
                                 if let Err(e) = clip.1.deserialize(&path) {
                                     println!("<! could not load file {}: {}", path.display(), e);
                                     break;
@@ -1073,14 +1083,19 @@ impl Prog {
                             }
                         }
                         self.stop();
-                    } else if cmd == "w" {
+                    } else if let Some(suffix) = cmd.strip_prefix("w ") {
                         if cfg().population_path.is_empty() {
                             println!("<! no population path set");
+                        } else if suffix.is_empty() {
+                            println!("<! must provide filename prefix");
                         } else {
+                            let file_prefix = suffix;
                             let pool = self.pool.borrow();
                             for idx in 0..pool.population().len() {
                                 let clip = &pool.population()[idx].1;
-                                let path = cfg().population_path().join(format!("{}.ch", idx));
+                                let path = cfg()
+                                    .population_path()
+                                    .join(format!("{}_{}.ch", file_prefix, idx));
                                 if let Err(e) = clip.serialize(&path) {
                                     println!("<! could not write file {}: {}", path.display(), e);
                                     break;
@@ -1092,16 +1107,16 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  a <count>   : auto-evolve next <count> generations");
-                        println!("  bpm <val>   : change BPM");
-                        println!("  c           : continue");
-                        println!("  e <idx>     : edit clip");
-                        println!("  i           : info");
-                        println!("  l <count>   : load <count> genomes into population");
-                        println!("  mut <val>   : change mutation probability to <val>");
-                        println!("  q           : quit");
-                        println!("  s <idx>,... : play chained clips (song mode)");
-                        println!("  w           : write population");
+                        println!("  a <count>          : auto-evolve next <count> generations");
+                        println!("  bpm <val>          : change BPM");
+                        println!("  c                  : continue");
+                        println!("  e <idx>            : edit clip");
+                        println!("  i                  : info");
+                        println!("  l <count> <prefix> : load <count> genomes into population");
+                        println!("  mut <val>          : change mutation probability to <val>");
+                        println!("  q                  : quit");
+                        println!("  s <idx>,...        : play chained clips (song mode)");
+                        println!("  w <prefix>         : write population");
                     }
                 }
             }
