@@ -51,6 +51,7 @@ impl Config {
             } else if let Some(suffix) = line.strip_prefix("channels ") {
                 let parts: Vec<&str> = suffix.split('-').collect();
                 self.channels = (parts[0].parse().unwrap(), parts[1].parse().unwrap());
+                assert!(self.channels.0 <= self.channels.1);
             } else if let Some(suffix) = line.strip_prefix("beats_per_bar ") {
                 self.beats_per_bar = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
@@ -78,6 +79,10 @@ impl Config {
         }
 
         println!("<- loaded configuration: {:?}", self);
+    }
+
+    fn channel_count(&self) -> u8 {
+        self.channels.1 - self.channels.0 + 1
     }
 
     fn beats_per_bar_order(&self) -> u32 {
@@ -592,6 +597,9 @@ impl Prog {
             multiplier *= 0.9;
         }
 
+        // Histogram of channel usage.
+        let mut chan_histogram: HashMap<u8, usize> = HashMap::new();
+
         // Translate into nicer representation to analyze. Each element corresponds to the shortest
         // beat, and each entry contains a list of notes that are playing.
         let sheet = {
@@ -633,6 +641,7 @@ impl Prog {
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
                                 insert_sheet(cur_beat + b, n.clone());
+                                *(chan_histogram.entry(*c).or_default()) += 1;
                             }
                         } else {
                             panic!("unexpected duration: {}", d);
@@ -655,6 +664,7 @@ impl Prog {
                                     let note = notes.next().unwrap();
                                     for b in 0..*beats {
                                         insert_sheet(cur_beat + beat_offset + b, note.clone());
+                                        *(chan_histogram.entry(*c).or_default()) += 1;
                                     }
                                 }
                                 beat_offset += beats;
@@ -808,6 +818,22 @@ impl Prog {
                 }
             }
             melody_score
+        };
+
+        // Channel usage should be balanced.
+        fitness -= {
+            let mut penalty = 0.0;
+            // This may differ from sheet.len() because the sheet is resized at the end.
+            let total_count: usize = chan_histogram.iter().map(|(_, &v)| v).sum();
+            let ideal_frac = 1.0 / (cfg().channel_count() as f32);
+            for &count in chan_histogram.values() {
+                let frac = (count as f32) / (total_count as f32);
+                penalty += (ideal_frac - frac).abs();
+            }
+            assert!(chan_histogram.len() <= cfg().channel_count() as usize);
+            let unused_chans = cfg().channel_count() as usize - chan_histogram.len();
+            penalty += ideal_frac * (unused_chans as f32);
+            penalty
         };
 
         // Penalize too many rests.
