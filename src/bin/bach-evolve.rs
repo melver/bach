@@ -904,7 +904,7 @@ impl Prog {
                         println!("fitness: {}", clip.fitness_as_str());
                     } else if let Some(suffix) = cmd.strip_prefix("l ") {
                         if let Err(e) = clip.deserialize(Path::new(suffix)) {
-                            println!("<! could not read file: {}", e);
+                            println!("<! could not read file {}: {}", suffix, e);
                         }
                     } else if cmd == "p" {
                         self.play(clip);
@@ -1062,23 +1062,34 @@ impl Prog {
                             if !is_running() {
                                 break;
                             }
-                            match part.parse::<usize>() {
-                                Ok(idx) => {
-                                    let pool = self.pool.borrow();
-                                    if idx >= pool.population().len() {
-                                        println!(
-                                            "<! index out of bounds: {} >= {}",
-                                            idx,
-                                            pool.population().len()
-                                        );
+                            if let Some(path) = part.strip_prefix('@') {
+                                // Play directly from file.
+                                let mut clip = ClipGenome::default();
+                                if let Err(e) = clip.deserialize(Path::new(path)) {
+                                    println!("<! could not read file {}: {}", path, e);
+                                    break;
+                                }
+                                self.play(&clip);
+                            } else {
+                                // Play from the current population.
+                                match part.parse::<usize>() {
+                                    Ok(idx) => {
+                                        let pool = self.pool.borrow();
+                                        if idx >= pool.population().len() {
+                                            println!(
+                                                "<! index out of bounds: {} >= {}",
+                                                idx,
+                                                pool.population().len()
+                                            );
+                                            break;
+                                        }
+                                        let clip = &pool.population()[idx].1;
+                                        self.play(clip);
+                                    }
+                                    Err(e) => {
+                                        println!("<! invalid index: {}", e);
                                         break;
                                     }
-                                    let clip = &pool.population()[idx].1;
-                                    self.play(clip);
-                                }
-                                Err(e) => {
-                                    println!("<! invalid index: {}", e);
-                                    break;
                                 }
                             }
                         }
@@ -1107,16 +1118,16 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  a <count>          : auto-evolve next <count> generations");
-                        println!("  bpm <val>          : change BPM");
-                        println!("  c                  : continue");
-                        println!("  e <idx>            : edit clip");
-                        println!("  i                  : info");
-                        println!("  l <count> <prefix> : load <count> genomes into population");
-                        println!("  mut <val>          : change mutation probability to <val>");
-                        println!("  q                  : quit");
-                        println!("  s <idx>,...        : play chained clips (song mode)");
-                        println!("  w <prefix>         : write population");
+                        println!("  a <count>            : auto-evolve next <count> generations");
+                        println!("  bpm <val>            : change BPM");
+                        println!("  c                    : continue");
+                        println!("  e <idx>              : edit clip");
+                        println!("  i                    : info");
+                        println!("  l <count> <prefix>   : load <count> genomes into population");
+                        println!("  mut <val>            : change mutation probability to <val>");
+                        println!("  q                    : quit");
+                        println!("  s <idx or @file>,... : play chained clips (song mode)");
+                        println!("  w <prefix>           : write population");
                     }
                 }
             }
