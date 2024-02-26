@@ -295,7 +295,7 @@ impl ClipGenome {
                     chan,
                     self.gen_note(chan, rng),
                     self.gen_velocity(rng),
-                    self.gen_duration(rng, false),
+                    self.gen_duration(rng, true),
                 )
             }
             20..=49 => {
@@ -360,7 +360,7 @@ impl Genome for ClipGenome {
                             *chan,
                             note.clone(),
                             velocity.clone(),
-                            self.gen_duration(&mut rng, false),
+                            self.gen_duration(&mut rng, true),
                         ),
                         3 => self.gen_cmd(&mut rng),
                         _ => unreachable!(),
@@ -634,8 +634,7 @@ impl Prog {
                                 insert_sheet(cur_beat + b, n.clone());
                             }
                         } else {
-                            // Penalize untimed starts and stops.
-                            multiplier *= 0.95;
+                            panic!("unexpected duration: {}", d);
                         }
                     }
                     SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
