@@ -582,13 +582,14 @@ impl Prog {
     /// Evaluate the fitness of a clip without manual feedback based on some generic heuristics of
     /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
+        let mut fitness = 0.0;
         let mut multiplier = 1.0;
         if clip.clip.len() > 150 {
             // Things will become slow if too large. But we also don't want to discard the
             // information in potentially good genomes, so just slightly penalize them.
             //
             // It can still get to long clips by using jumps.
-            multiplier *= 0.95;
+            multiplier *= 0.9;
         }
 
         // Translate into nicer representation to analyze. Each element corresponds to the shortest
@@ -628,7 +629,7 @@ impl Prog {
                     SeqCommand::QueueNote(c, n, v, d) => {
                         let mut seq = self.seq.borrow_mut();
                         if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
-                            multiplier *= 0.95;
+                            fitness -= 1.0;
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
                                 insert_sheet(cur_beat + b, n.clone());
@@ -645,7 +646,7 @@ impl Prog {
                             .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
                             .is_err()
                         {
-                            multiplier *= 0.95;
+                            fitness -= 2.0;
                         } else if let Duration::Beats(beats, _) = d {
                             let mut notes = ns.iter().cycle();
                             let mut beat_offset = 0;
@@ -680,9 +681,6 @@ impl Prog {
             clip.fitness = Some(-1e6);
             return;
         }
-
-        // Now we can analyze the flattened view of sequenced notes.
-        let mut fitness = 0.0;
 
         // The harmony table assigns scores to note intervals (in semitone offsets).
         let harmony_table = HashMap::from([
@@ -815,7 +813,7 @@ impl Prog {
         // Penalize too many rests.
         fitness -= {
             let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
-            (rest_count as f32) / (sheet.len() as f32).log(2.0)
+            (rest_count as f32) / (sheet.len() as f32).log(4.0)
         };
 
         // Penalize duplicates: compute hashes of all time windows, and count unique hashes.
@@ -830,8 +828,9 @@ impl Prog {
                 let hash = hasher.finish();
                 *(window_counts.entry(hash).or_default()) += 1;
             }
+            //let dups: usize = window_counts.iter().filter(|(_, &v)| v > 1).map(|(_, &v)| v).sum();
             let dups = window_counts.iter().filter(|(_, &v)| v > 1).count();
-            (dups as f32) / (sheet.len() as f32).log(2.0)
+            (dups as f32) / (sheet.len() as f32).log(3.0)
         };
 
         // Normalize fitness against length.
