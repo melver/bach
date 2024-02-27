@@ -25,6 +25,7 @@ struct Config {
     beats_per_bar: u32,
     note_scale: Vec<Note>,
     chord_weight: f32,
+    melody_weight: f32,
     skip_allocated: bool,
     clip_init_len: usize,
     clip_tail: Duration,
@@ -60,6 +61,8 @@ impl Config {
                 assert!(!self.note_scale.is_empty());
             } else if let Some(suffix) = line.strip_prefix("chord_weight ") {
                 self.chord_weight = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("melody_weight ") {
+                self.melody_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
@@ -111,6 +114,7 @@ static mut CONFIG: Config = Config {
     note_scale: vec![],
     skip_allocated: false,
     chord_weight: 1.0,
+    melody_weight: 1.0,
     clip_init_len: 30,
     clip_fixed_len: true,
     clip_tail: Duration::Beats(3, 1),
@@ -786,8 +790,8 @@ impl Prog {
             chord_score
         };
 
-        // Calculate harmony score for non-simultaneous notes (melody/arp).
-        fitness += {
+        // Calculate harmony score for non-simultaneous notes (melody).
+        fitness += cfg().melody_weight * {
             let mut melody_score = 0.0;
             // How many notes to look back at. This can be useful to produce longer interesting
             // sequences.
