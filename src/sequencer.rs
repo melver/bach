@@ -145,6 +145,19 @@ impl TickClock {
             Duration::End => Some(0),
         }
     }
+
+    /// Return the current elapsed time in quarter notes and absolute time.
+    pub fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
+        let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
+        (
+            Duration::Beats(on_beat, beats_per_bar),
+            if self.tick == 0 {
+                time::Duration::ZERO
+            } else {
+                self.start_time.elapsed()
+            },
+        )
+    }
 }
 
 /// Keeps track of MIDI commands and emits them for each tick.

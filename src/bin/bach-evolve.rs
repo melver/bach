@@ -535,7 +535,14 @@ impl Prog {
 
             let seq_cmd = &clip.clip[cmd_idx as usize];
             if !skip_cmd.contains(&cmd_idx) {
-                println!("<{}> {}", cmd_idx, seq_cmd);
+                let (elapsed_qns, elapsed_real) = self.clock.borrow().elapsed(cfg().beats_per_bar);
+                println!(
+                    "[{:.2}s | {}] <{}> {}",
+                    elapsed_real.as_secs_f32(),
+                    elapsed_qns,
+                    cmd_idx,
+                    seq_cmd
+                );
             }
 
             match seq_cmd {
