@@ -30,6 +30,7 @@ struct Config {
     clip_init_len: usize,
     clip_tail: Duration,
     clip_fixed_len: bool,
+    song_continue: bool,
     population_size: usize,
     mutation_probability: f32,
     tournament_size: usize,
@@ -69,6 +70,8 @@ impl Config {
                 self.clip_init_len = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_fixed_len ") {
                 self.clip_fixed_len = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("song_continue ") {
+                self.song_continue = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_tail ") {
                 self.clip_tail = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("population_size ") {
@@ -117,6 +120,7 @@ static mut CONFIG: Config = Config {
     melody_weight: 1.0,
     clip_init_len: 30,
     clip_fixed_len: true,
+    song_continue: true,
     clip_tail: Duration::Beats(3, 1),
     population_size: 64,
     mutation_probability: 0.02,
@@ -1132,6 +1136,9 @@ impl Prog {
                                         break;
                                     }
                                 }
+                            }
+                            if !cfg().song_continue {
+                                self.stop();
                             }
                         }
                         self.stop();
