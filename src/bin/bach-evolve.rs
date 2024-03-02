@@ -24,6 +24,7 @@ struct Config {
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Vec<Note>,
+    chord_weight: f32,
     skip_allocated: bool,
     clip_init_len: usize,
     clip_tail: Duration,
@@ -57,6 +58,8 @@ impl Config {
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
                 self.note_scale = suffix.split(',').map(|s| s.parse().unwrap()).collect();
                 assert!(!self.note_scale.is_empty());
+            } else if let Some(suffix) = line.strip_prefix("chord_weight ") {
+                self.chord_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
@@ -107,6 +110,7 @@ static mut CONFIG: Config = Config {
     beats_per_bar: 8,
     note_scale: vec![],
     skip_allocated: false,
+    chord_weight: 1.0,
     clip_init_len: 30,
     clip_fixed_len: true,
     clip_tail: Duration::Beats(3, 1),
@@ -750,7 +754,7 @@ impl Prog {
         ]);
 
         // Calculate harmony score for simultanous notes (chords)
-        fitness += {
+        fitness += cfg().chord_weight * {
             let mut chord_score = 0.0;
             for beat_notes in &sheet {
                 for i in 0..beat_notes.len() {
