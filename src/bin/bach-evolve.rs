@@ -945,6 +945,7 @@ impl Prog {
                             Ok(f) => clip.fitness = Some(f),
                             Err(e) => println!("<! invalid argument: {}", e),
                         }
+                        // Capital version immediately returns.
                         if cmd.starts_with('F') {
                             return true;
                         }
@@ -955,9 +956,14 @@ impl Prog {
                         if let Err(e) = clip.deserialize(Path::new(suffix)) {
                             println!("<! could not read file {}: {}", suffix, e);
                         }
-                    } else if cmd == "p" {
-                        self.play(clip);
-                        self.stop();
+                    } else if cmd.to_lowercase() == "p" {
+                        loop {
+                            self.play(clip);
+                            self.stop();
+                            if !is_running() || cmd == "p" {
+                                break;
+                            }
+                        }
                     } else if let Some(suffix) = cmd.strip_prefix("w ") {
                         if let Err(e) = clip.serialize(Path::new(suffix)) {
                             println!("<! could not write file: {}", e);
@@ -973,10 +979,10 @@ impl Prog {
                         println!("  c <comment>     : comment");
                         println!("  d               : dump");
                         println!("  e <idx> = <cmd> : edit command at index");
-                        println!("  f <val>         : assign fitness value");
+                        println!("  f/F <val>       : assign fitness value / back");
                         println!("  i               : info");
                         println!("  l <file>        : load from file");
-                        println!("  p               : play");
+                        println!("  p/P             : play / loop");
                         println!("  q               : quit");
                         println!("  w <file>        : write");
                     }
@@ -1106,8 +1112,22 @@ impl Prog {
                         }
                     } else if cmd == "q" {
                         return false;
-                    } else if let Some(suffix) = cmd.strip_prefix("s ") {
-                        for part in suffix.split(',') {
+                    } else if cmd.to_lowercase().starts_with("s ") {
+                        let suffix = &cmd[2..];
+                        let mut parts = suffix.split(',');
+                        loop {
+                            let part = match parts.next() {
+                                Some(s) => s,
+                                None => {
+                                    // Capital version of command will keep looping.
+                                    if cmd.starts_with('S') {
+                                        parts = suffix.split(',');
+                                        continue;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            };
                             if !is_running() {
                                 break;
                             }
@@ -1170,16 +1190,16 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("main help:");
-                        println!("  a <count>            : auto-evolve next <count> generations");
-                        println!("  bpm <val>            : change BPM");
-                        println!("  c                    : continue");
-                        println!("  e <idx>              : edit clip");
-                        println!("  i                    : info");
-                        println!("  l <count> <prefix>   : load <count> genomes into population");
-                        println!("  mut <val>            : change mutation probability to <val>");
-                        println!("  q                    : quit");
-                        println!("  s <idx or @file>,... : play chained clips (song mode)");
-                        println!("  w <prefix>           : write population");
+                        println!("  a <count>              : auto-evolve next <count> generations");
+                        println!("  bpm <val>              : change BPM");
+                        println!("  c                      : continue");
+                        println!("  e <idx>                : edit clip");
+                        println!("  i                      : info");
+                        println!("  l <count> <prefix>     : load <count> genomes into population");
+                        println!("  mut <val>              : change mutation probability to <val>");
+                        println!("  q                      : quit");
+                        println!("  s/S <idx or @file>,... : play/loop chained clips (song mode)");
+                        println!("  w <prefix>             : write population");
                     }
                 }
             }
