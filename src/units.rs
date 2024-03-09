@@ -56,14 +56,17 @@ impl Display for Duration {
     }
 }
 
+/// Musical scales/modes: the first element is the key, with relative note of the second element.
 #[derive(Clone, Debug, PartialEq, Hash)]
 pub enum Note {
     /// Raw MIDI note.
     Raw(u8),
-    /// Major scales in the first element's key, with relative note of the second element.
+    /// Major scales (ionian mode).
     Maj(u8, i8),
-    /// Natural minor scales.
+    /// Natural minor scales (aeolian mode).
     Min(u8, i8),
+    /// Harmonic minor scales.
+    HMin(u8, i8),
     // TODO: Support more.
 }
 
@@ -88,6 +91,12 @@ impl FromStr for Note {
                 parts[0].parse().map_err(|e| format!("{}", e))?,
                 parts[1].parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s.starts_with("hmin@") {
+            let parts: Vec<&str> = s.trim_start_matches("hmin@").split(':').collect();
+            Ok(Note::HMin(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
             Err(format!("unknown note: {}", s))
         }
@@ -100,6 +109,7 @@ impl Display for Note {
             Note::Raw(v) => write!(f, "@{}", v),
             Note::Maj(key, offset) => write!(f, "maj@{}:{}", key, offset),
             Note::Min(key, offset) => write!(f, "min@{}:{}", key, offset),
+            Note::HMin(key, offset) => write!(f, "hmin@{}:{}", key, offset),
         }
     }
 }
@@ -155,6 +165,21 @@ impl From<&Note> for Result<u8> {
                         4 => 7,
                         5 => 8,
                         6 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::HMin(key, note) => {
+                let (octave, offset) = get_octave_offset(note);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 3,
+                        3 => 5,
+                        4 => 7,
+                        5 => 8,
+                        6 => 11,
                         _ => unreachable!(),
                     }
             }
