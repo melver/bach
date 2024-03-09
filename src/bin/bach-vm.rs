@@ -33,8 +33,9 @@ fn main() {
             continue;
         } else if let Some(suffix) = line.strip_prefix(".scale ") {
             map_note = match suffix.parse().unwrap() {
-                Note::Raw(_) => Some(Box::new(|n| Note::Raw(n as u8))),
-                Note::Maj(k, _) => Some(Box::new(move |n| Note::Maj(k, n))),
+                Note::Raw(o) => Some(Box::new(move |n| Note::Raw(o + n as u8))),
+                Note::Maj(k, o) => Some(Box::new(move |n| Note::Maj(k, o + n))),
+                Note::Min(k, o) => Some(Box::new(move |n| Note::Min(k, o + n))),
             }
         } else if let Some(suffix) = line.strip_prefix(".time_sig ") {
             map_duration = match suffix.parse().unwrap() {

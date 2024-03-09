@@ -103,6 +103,7 @@ impl Config {
         match note_scale[chan as usize % note_scale.len()] {
             Note::Raw(o) => Note::Raw(o + note as u8),
             Note::Maj(k, o) => Note::Maj(k, o + note),
+            Note::Min(k, o) => Note::Min(k, o + note),
         }
     }
 

@@ -62,7 +62,9 @@ pub enum Note {
     Raw(u8),
     /// Major scales in the first element's key, with relative note of the second element.
     Maj(u8, i8),
-    // TODO: more
+    /// Natural minor scales.
+    Min(u8, i8),
+    // TODO: Support more.
 }
 
 impl FromStr for Note {
@@ -80,6 +82,12 @@ impl FromStr for Note {
                 parts[0].parse().map_err(|e| format!("{}", e))?,
                 parts[1].parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s.starts_with("min@") {
+            let parts: Vec<&str> = s.trim_start_matches("min@").split(':').collect();
+            Ok(Note::Min(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
             Err(format!("unknown note: {}", s))
         }
@@ -91,6 +99,7 @@ impl Display for Note {
         match self {
             Note::Raw(v) => write!(f, "@{}", v),
             Note::Maj(key, offset) => write!(f, "maj@{}:{}", key, offset),
+            Note::Min(key, offset) => write!(f, "min@{}:{}", key, offset),
         }
     }
 }
@@ -131,6 +140,21 @@ impl From<&Note> for Result<u8> {
                         4 => 7,
                         5 => 9,
                         6 => 11,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Min(key, note) => {
+                let (octave, offset) = get_octave_offset(note);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 3,
+                        3 => 5,
+                        4 => 7,
+                        5 => 8,
+                        6 => 10,
                         _ => unreachable!(),
                     }
             }
