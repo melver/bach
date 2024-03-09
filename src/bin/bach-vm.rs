@@ -33,7 +33,7 @@ fn main() {
             continue;
         } else if let Some(suffix) = line.strip_prefix(".scale ") {
             map_note = match suffix.parse().unwrap() {
-                Note::Raw(o) => Some(Box::new(move |n| Note::Raw(o + n as u8))),
+                Note::Raw(o) => Some(Box::new(move |n| Note::Raw(o + n))),
                 Note::Maj(k, o) => Some(Box::new(move |n| Note::Maj(k, o + n))),
                 Note::Min(k, o) => Some(Box::new(move |n| Note::Min(k, o + n))),
                 Note::HMin(k, o) => Some(Box::new(move |n| Note::HMin(k, o + n))),

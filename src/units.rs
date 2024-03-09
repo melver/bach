@@ -59,8 +59,8 @@ impl Display for Duration {
 /// Musical scales/modes: the first element is the key, with relative note of the second element.
 #[derive(Clone, Debug, PartialEq, Hash)]
 pub enum Note {
-    /// Raw MIDI note.
-    Raw(u8),
+    /// Raw MIDI note / chromatic scales.
+    Raw(i8),
     /// Major scales (ionian mode).
     Maj(u8, i8),
     /// Natural minor scales (aeolian mode).

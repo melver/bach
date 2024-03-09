@@ -101,7 +101,7 @@ impl Config {
     fn map_note(&self, chan: u8, note: i8) -> Note {
         let note_scale = &cfg().note_scale;
         match note_scale[chan as usize % note_scale.len()] {
-            Note::Raw(o) => Note::Raw(o + note as u8),
+            Note::Raw(o) => Note::Raw(o + note),
             Note::Maj(k, o) => Note::Maj(k, o + note),
             Note::Min(k, o) => Note::Min(k, o + note),
             Note::HMin(k, o) => Note::HMin(k, o + note),
