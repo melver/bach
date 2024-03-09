@@ -67,6 +67,8 @@ pub enum Note {
     Min(u8, i8),
     /// Harmonic minor scales.
     HMin(u8, i8),
+    /// Melodic minor scales.
+    MMin(u8, i8),
     // TODO: Support more.
 }
 
@@ -97,6 +99,12 @@ impl FromStr for Note {
                 parts[0].parse().map_err(|e| format!("{}", e))?,
                 parts[1].parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s.starts_with("mmin@") {
+            let parts: Vec<&str> = s.trim_start_matches("mmin@").split(':').collect();
+            Ok(Note::MMin(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
             Err(format!("unknown note: {}", s))
         }
@@ -110,21 +118,23 @@ impl Display for Note {
             Note::Maj(key, offset) => write!(f, "maj@{}:{}", key, offset),
             Note::Min(key, offset) => write!(f, "min@{}:{}", key, offset),
             Note::HMin(key, offset) => write!(f, "hmin@{}:{}", key, offset),
+            Note::MMin(key, offset) => write!(f, "mmin@{}:{}", key, offset),
         }
     }
 }
 
 /// Convert a note (in scale dimension) to octave index and offset into that octave.
-fn get_octave_offset(note: i8) -> (i32, i32) {
-    let note_ = note as i32;
-    let octave = if note_ >= 0 {
-        note_ / 7
+fn get_octave_offset(note: i8, octave_len: u8) -> (i32, i32) {
+    let note = note as i32;
+    let octave_len = octave_len as i32;
+    let octave = if note >= 0 {
+        note / octave_len
     } else {
-        (note_ + 1) / 7 - 1
+        (note + 1) / octave_len - 1
     };
-    let offset = note_ - octave * 7;
+    let offset = note - octave * octave_len;
     assert!(
-        offset >= 0 && offset < 7,
+        offset >= 0 && offset < octave_len,
         "note={}, octave={}, offset={}",
         note,
         octave,
@@ -139,7 +149,7 @@ impl From<&Note> for Result<u8> {
         let ret: i32 = match *note {
             Note::Raw(note) => note as i32,
             Note::Maj(key, note) => {
-                let (octave, offset) = get_octave_offset(note);
+                let (octave, offset) = get_octave_offset(note, 7);
                 (key as i32)
                     + octave * 12
                     + match offset {
@@ -154,7 +164,7 @@ impl From<&Note> for Result<u8> {
                     }
             }
             Note::Min(key, note) => {
-                let (octave, offset) = get_octave_offset(note);
+                let (octave, offset) = get_octave_offset(note, 7);
                 (key as i32)
                     + octave * 12
                     + match offset {
@@ -169,7 +179,7 @@ impl From<&Note> for Result<u8> {
                     }
             }
             Note::HMin(key, note) => {
-                let (octave, offset) = get_octave_offset(note);
+                let (octave, offset) = get_octave_offset(note, 7);
                 (key as i32)
                     + octave * 12
                     + match offset {
@@ -180,6 +190,23 @@ impl From<&Note> for Result<u8> {
                         4 => 7,
                         5 => 8,
                         6 => 11,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::MMin(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 9);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 3,
+                        3 => 5,
+                        4 => 7,
+                        5 => 8,
+                        6 => 9,
+                        7 => 10,
+                        8 => 11,
                         _ => unreachable!(),
                     }
             }

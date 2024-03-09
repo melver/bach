@@ -37,6 +37,7 @@ fn main() {
                 Note::Maj(k, o) => Some(Box::new(move |n| Note::Maj(k, o + n))),
                 Note::Min(k, o) => Some(Box::new(move |n| Note::Min(k, o + n))),
                 Note::HMin(k, o) => Some(Box::new(move |n| Note::HMin(k, o + n))),
+                Note::MMin(k, o) => Some(Box::new(move |n| Note::MMin(k, o + n))),
             }
         } else if let Some(suffix) = line.strip_prefix(".time_sig ") {
             map_duration = match suffix.parse().unwrap() {
