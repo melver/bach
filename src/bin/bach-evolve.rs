@@ -106,6 +106,7 @@ impl Config {
             Note::Min(k, o) => Note::Min(k, o + note),
             Note::HMin(k, o) => Note::HMin(k, o + note),
             Note::MMin(k, o) => Note::MMin(k, o + note),
+            Note::Phr(k, o) => Note::Phr(k, o + note),
         }
     }
 

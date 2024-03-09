@@ -69,6 +69,8 @@ pub enum Note {
     HMin(u8, i8),
     /// Melodic minor scales.
     MMin(u8, i8),
+    /// Phrygian modes.
+    Phr(u8, i8),
     // TODO: Support more.
 }
 
@@ -105,6 +107,12 @@ impl FromStr for Note {
                 parts[0].parse().map_err(|e| format!("{}", e))?,
                 parts[1].parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s.starts_with("phr@") {
+            let parts: Vec<&str> = s.trim_start_matches("phr@").split(':').collect();
+            Ok(Note::Phr(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
             Err(format!("unknown note: {}", s))
         }
@@ -119,6 +127,7 @@ impl Display for Note {
             Note::Min(key, offset) => write!(f, "min@{}:{}", key, offset),
             Note::HMin(key, offset) => write!(f, "hmin@{}:{}", key, offset),
             Note::MMin(key, offset) => write!(f, "mmin@{}:{}", key, offset),
+            Note::Phr(key, offset) => write!(f, "phr@{}:{}", key, offset),
         }
     }
 }
@@ -207,6 +216,21 @@ impl From<&Note> for Result<u8> {
                         6 => 9,
                         7 => 10,
                         8 => 11,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Phr(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 7);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 1,
+                        2 => 3,
+                        3 => 5,
+                        4 => 7,
+                        5 => 8,
+                        6 => 10,
                         _ => unreachable!(),
                     }
             }
