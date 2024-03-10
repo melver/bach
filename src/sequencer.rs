@@ -164,6 +164,8 @@ impl TickClock {
 pub struct MidiSequencer {
     /// The current tick.
     pub tick: u64,
+    /// Send MIDI clock.
+    pub send_clock: bool,
     /// Map of tick to queued commands.
     queue: HashMap<u64, Vec<u8>>,
     /// Map of allocated notes (channel, note) and their expiration tick. This is to avoid
@@ -173,9 +175,10 @@ pub struct MidiSequencer {
 }
 
 impl MidiSequencer {
-    pub fn new() -> Self {
+    pub fn new(send_clock: bool) -> Self {
         Self {
             tick: 0,
+            send_clock,
             queue: HashMap::new(),
             allocated: HashMap::new(),
         }
@@ -190,7 +193,7 @@ impl MidiSequencer {
         self.tick += 1; // advance tick
 
         let ticks_per_clock = (tick_clock.ppqn / CLOCKS_PER_QN) as u64;
-        if (self.tick - 1) % ticks_per_clock == 0 {
+        if self.send_clock && (self.tick - 1) % ticks_per_clock == 0 {
             // Clock has highest priority; send it first.
             let mut ret: Vec<u8> = MidiMsg::Clock.into();
             if let Some(ref mut queue) = queue_opt {
@@ -397,7 +400,7 @@ impl MidiSequencer {
 
 impl Default for MidiSequencer {
     fn default() -> Self {
-        Self::new()
+        Self::new(true)
     }
 }
 
@@ -619,7 +622,7 @@ mod tests {
     #[test]
     fn one_note() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
             1,
@@ -639,9 +642,31 @@ mod tests {
     }
 
     #[test]
+    fn one_note_no_clock() {
+        let mut clock = TickClock::default();
+        let mut seq = MidiSequencer::new(false);
+        seq.queue(
+            &clock,
+            1,
+            &Note::Maj(60, 0),
+            &Velocity::Mf,
+            &Duration::Beats(3, 4 * clock.ppqn),
+        )
+        .unwrap();
+        assert_eq!(seq.tick(&clock), vec![0x91, 60, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        clock.await_tick();
+    }
+
+    #[test]
     fn one_note_fast_forward() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
             1,
@@ -663,7 +688,7 @@ mod tests {
     #[test]
     fn multiple_notes() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
             1,
@@ -703,7 +728,7 @@ mod tests {
     #[test]
     fn queue_sequence() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
         seq.queue_sequence(
             &clock,
             1,
@@ -733,7 +758,7 @@ mod tests {
     #[test]
     fn already_queueing_note() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
             0,
@@ -783,7 +808,7 @@ mod tests {
     #[test]
     fn duration_start_stop() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
 
         // Starting and immediately stopping is ok.
         seq.queue(
@@ -833,7 +858,7 @@ mod tests {
     #[test]
     fn stop_restart() {
         let mut clock = TickClock::default();
-        let mut seq = MidiSequencer::new();
+        let mut seq = MidiSequencer::default();
 
         seq.queue(
             &clock,

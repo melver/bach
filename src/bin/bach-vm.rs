@@ -55,7 +55,7 @@ fn main() {
 
     let vmstate = Rc::new(SeqVmState {
         clock: RefCell::new(TickClock::new(bpm, ppqn)),
-        seq: RefCell::new(MidiSequencer::new()),
+        seq: RefCell::new(MidiSequencer::default()),
         map_note: map_note.expect("must provide .scale directive"),
         map_duration: map_duration.expect("must provide .time_sig directive"),
     });

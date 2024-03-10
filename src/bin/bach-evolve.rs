@@ -21,6 +21,7 @@ use std::thread;
 
 #[derive(Debug)]
 struct Config {
+    send_clock: bool,
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Vec<Note>,
@@ -51,6 +52,8 @@ impl Config {
         for line in io::BufReader::new(file).lines().map(|l| l.unwrap()) {
             if line.starts_with('#') {
                 continue;
+            } else if let Some(suffix) = line.strip_prefix("send_clock ") {
+                self.send_clock = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("channels ") {
                 let parts: Vec<&str> = suffix.split('-').collect();
                 self.channels = (parts[0].parse().unwrap(), parts[1].parse().unwrap());
@@ -116,6 +119,7 @@ impl Config {
 }
 
 static mut CONFIG: Config = Config {
+    send_clock: true,
     channels: (0, 2),
     beats_per_bar: 8,
     note_scale: vec![],
@@ -502,7 +506,7 @@ impl Prog {
         Self {
             midi_file: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
             clock: RefCell::new(sequencer::TickClock::new(bpm, ppqn)),
-            seq: RefCell::new(sequencer::MidiSequencer::new()),
+            seq: RefCell::new(sequencer::MidiSequencer::new(cfg().send_clock)),
             pool: RefCell::new(ga::GenomePool::new(
                 ClipGenome::default(),
                 cfg().population_size,

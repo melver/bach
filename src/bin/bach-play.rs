@@ -64,7 +64,7 @@ fn main() {
     clip.push(SeqCommand::Tick(Duration::Beats(3, 1)));
 
     let mut clock = sequencer::TickClock::new(bpm, ppqn);
-    let mut seq = sequencer::MidiSequencer::new();
+    let mut seq = sequencer::MidiSequencer::default();
     let mut skip_cmd = HashSet::new();
     let mut cmd_idx: isize = 0;
 
