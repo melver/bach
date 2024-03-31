@@ -14,6 +14,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::ptr::addr_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
@@ -138,7 +139,7 @@ static mut CONFIG: Config = Config {
 
 fn cfg() -> &'static Config {
     // SAFETY: Initialized once at startup.
-    unsafe { &CONFIG }
+    unsafe { &*addr_of!(CONFIG) }
 }
 
 static mut RUNNING: AtomicBool = AtomicBool::new(true);
