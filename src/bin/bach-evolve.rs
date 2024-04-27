@@ -28,6 +28,9 @@ struct Config {
     note_scale: Vec<Note>,
     chord_weight: f32,
     melody_weight: f32,
+    chan_balance_weight: f32,
+    rest_weight: f32,
+    dup_weight: f32,
     skip_allocated: bool,
     clip_init_len: usize,
     clip_tail: Duration,
@@ -68,6 +71,12 @@ impl Config {
                 self.chord_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("melody_weight ") {
                 self.melody_weight = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("chan_balance_weight ") {
+                self.chan_balance_weight = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("rest_weight ") {
+                self.rest_weight = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("dup_weight ") {
+                self.dup_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
@@ -127,6 +136,9 @@ static mut CONFIG: Config = Config {
     skip_allocated: false,
     chord_weight: 1.0,
     melody_weight: 1.0,
+    chan_balance_weight: 1.0,
+    rest_weight: -1.0,
+    dup_weight: -1.0,
     clip_init_len: 30,
     clip_fixed_len: true,
     song_continue: true,
@@ -848,8 +860,9 @@ impl Prog {
             melody_score
         };
 
-        // Channel usage should be balanced.
-        fitness -= {
+        // Score balanced channel usage. Calculating penalty is more intuitive, so we will
+        // subtract the penalty, however, the "weight" denotes a positive property.
+        fitness -= cfg().chan_balance_weight * {
             let mut penalty = 0.0;
             // This may differ from sheet.len() because the sheet is resized at the end.
             let total_count: usize = chan_histogram.iter().map(|(_, &v)| v).sum();
@@ -864,14 +877,14 @@ impl Prog {
             penalty
         };
 
-        // Penalize too many rests.
-        fitness -= {
+        // Score too many rests.
+        fitness += cfg().rest_weight * {
             let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
-            (rest_count as f32) / (sheet.len() as f32).log(4.0)
+            rest_count as f32
         };
 
-        // Penalize duplicates: compute hashes of all time windows, and count unique hashes.
-        fitness -= {
+        // Score duplicates: compute hashes of all time windows, and count unique hashes.
+        fitness += cfg().dup_weight * {
             let window_size = cfg().beats_per_bar as usize / 2;
             let mut window_counts: HashMap<u64, usize> = HashMap::new();
             for window_start in 0..=(sheet.len() - window_size) {
