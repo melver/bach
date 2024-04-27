@@ -628,13 +628,15 @@ impl Prog {
     /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
         let mut fitness = 0.0;
-        let mut multiplier = 1.0;
+        // Captures if we encountered error; if value is below 1.0, there were errors and the final
+        // fitness score is penalized.
+        let mut valid = 1.0;
         if clip.clip.len() > 150 {
             // Things will become slow if too large. But we also don't want to discard the
             // information in potentially good genomes, so just slightly penalize them.
             //
             // It can still get to long clips by using jumps.
-            multiplier *= 0.9;
+            valid *= 0.9;
         }
 
         // Histogram of channel usage.
@@ -812,7 +814,7 @@ impl Prog {
                             }
                             // Warn, so we may add the missing data in future.
                             None => {
-                                multiplier *= 0.9;
+                                valid *= 0.9;
                                 println!("<! no harmony score for interval of {}", diff);
                             }
                         }
@@ -849,7 +851,7 @@ impl Prog {
                                     }
                                 }
                                 None => {
-                                    multiplier *= 0.9;
+                                    valid *= 0.9;
                                     println!("<! no harmony score for interval of {}", diff);
                                 }
                             }
@@ -905,7 +907,11 @@ impl Prog {
         fitness /= 1.0 + (sheet.len() as f32).log(1.2);
 
         assert_ne!(fitness, f32::INFINITY);
-        clip.fitness = Some(multiplier * fitness);
+        clip.fitness = if fitness > 0.0 {
+            Some(fitness * valid)
+        } else {
+            Some(fitness / valid)
+        };
     }
 
     /// Return true if program should keep running, false otherwise.
