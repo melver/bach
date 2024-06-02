@@ -55,7 +55,7 @@ impl Config {
 
         let file = fs::File::open(path).unwrap();
         for line in io::BufReader::new(file).lines().map(|l| l.unwrap()) {
-            if line.starts_with('#') {
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             } else if let Some(suffix) = line.strip_prefix("send_clock ") {
                 self.send_clock = suffix.parse().unwrap();
