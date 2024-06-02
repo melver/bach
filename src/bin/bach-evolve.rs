@@ -338,7 +338,7 @@ impl ClipGenome {
     fn gen_command(&self, rng: &mut ThreadRng) -> SeqCommand {
         // The extension range (multiplied by weight) are additional commands that are only
         // optionally generated.
-        let extension_weight = 2;
+        let extension_weight = cmp::max(1, 8 / (cfg().cc.len() + 1));
         let extension_range = cfg().cc.len() * extension_weight;
 
         match rng.gen_range(0..(100 + extension_range)) {
