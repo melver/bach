@@ -23,6 +23,7 @@ use std::thread;
 #[derive(Debug)]
 struct Config {
     send_clock: bool,
+    cc: Vec<(u8, u8, (u8, u8))>,
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Vec<Note>,
@@ -58,6 +59,15 @@ impl Config {
                 continue;
             } else if let Some(suffix) = line.strip_prefix("send_clock ") {
                 self.send_clock = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("cc ") {
+                let parts: Vec<&str> = suffix.split(' ').collect();
+                for part in &parts {
+                    let args: Vec<&str> = part.split(',').collect();
+                    let chan = args[0].parse().unwrap();
+                    let cc = args[1].parse().unwrap();
+                    let vals: Vec<u8> = args[2].split('-').map(|s| s.parse().unwrap()).collect();
+                    self.cc.push((chan, cc, (vals[0], vals[1])));
+                }
             } else if let Some(suffix) = line.strip_prefix("channels ") {
                 let parts: Vec<&str> = suffix.split('-').collect();
                 self.channels = (parts[0].parse().unwrap(), parts[1].parse().unwrap());
@@ -130,6 +140,7 @@ impl Config {
 
 static mut CONFIG: Config = Config {
     send_clock: true,
+    cc: vec![],
     channels: (0, 2),
     beats_per_bar: 8,
     note_scale: vec![],
@@ -324,8 +335,13 @@ impl ClipGenome {
         }
     }
 
-    fn gen_cmd(&self, rng: &mut ThreadRng) -> SeqCommand {
-        match rng.gen_range(0..100) {
+    fn gen_command(&self, rng: &mut ThreadRng) -> SeqCommand {
+        // The extension range (multiplied by weight) are additional commands that are only
+        // optionally generated.
+        let extension_weight = 2;
+        let extension_range = cfg().cc.len() * extension_weight;
+
+        match rng.gen_range(0..(100 + extension_range)) {
             0..=7 => SeqCommand::Jmp(rng.gen_range(-20..=0)),
             8..=19 => {
                 let chan = self.gen_channel(rng);
@@ -350,7 +366,15 @@ impl ClipGenome {
                 )
             }
             50..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
-            _ => unreachable!(),
+            rnd => {
+                let extension_idx: usize = rnd.wrapping_sub(100) / extension_weight;
+                if extension_idx < cfg().cc.len() {
+                    let (chan, control, range) = cfg().cc[extension_idx];
+                    SeqCommand::QueueControl(chan, control, rng.gen_range(range.0..=range.1))
+                } else {
+                    unreachable!();
+                }
+            }
         }
     }
 }
@@ -379,7 +403,7 @@ impl Genome for ClipGenome {
             }
 
             self.clip[idx] = match &self.clip[idx] {
-                SeqCommand::Jmp(_) | SeqCommand::Tick(_) => self.gen_cmd(&mut rng),
+                SeqCommand::Jmp(_) | SeqCommand::Tick(_) => self.gen_command(&mut rng),
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
                     match rng.gen_range(0..=3) {
                         0 => SeqCommand::QueueNote(
@@ -400,7 +424,7 @@ impl Genome for ClipGenome {
                             velocity.clone(),
                             self.gen_duration(&mut rng, true),
                         ),
-                        3 => self.gen_cmd(&mut rng),
+                        3 => self.gen_command(&mut rng),
                         _ => unreachable!(),
                     }
                 }
@@ -452,9 +476,10 @@ impl Genome for ClipGenome {
                             eucl_params.2,
                         )
                     }
-                    4 => self.gen_cmd(&mut rng),
+                    4 => self.gen_command(&mut rng),
                     _ => unreachable!(),
                 },
+                SeqCommand::QueueControl(_, _, _) => self.gen_command(&mut rng),
             };
 
             to_mutate -= 1;
@@ -584,8 +609,8 @@ impl Prog {
                     }
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
-                    let mut seq = self.seq.borrow_mut();
-                    if let Err(e) = seq.queue(&self.clock.borrow(), *c, n, v, d) {
+                    let clock = self.clock.borrow();
+                    if let Err(e) = self.seq.borrow_mut().queue(&clock, *c, n, v, d) {
                         println!("<! failed to queue: {}", e); // Just keep playing.
                     }
                 }
@@ -601,6 +626,11 @@ impl Prog {
                         &eucl,
                         cfg().skip_allocated,
                     ) {
+                        println!("<! failed to queue: {}", e);
+                    }
+                }
+                SeqCommand::QueueControl(c, cc, v) => {
+                    if let Err(e) = self.seq.borrow_mut().queue_control(*c, *cc, *v) {
                         println!("<! failed to queue: {}", e);
                     }
                 }
@@ -715,6 +745,7 @@ impl Prog {
                             panic!("{}", d);
                         }
                     }
+                    SeqCommand::QueueControl(_, _, _) => {}
                 }
 
                 cmd_idx += 1;

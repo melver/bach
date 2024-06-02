@@ -160,13 +160,13 @@ impl TickClock {
     }
 }
 
-/// Keeps track of MIDI commands and emits them for each tick.
+/// Keeps track of MIDI messages and emits them for each tick.
 pub struct MidiSequencer {
     /// The current tick.
     pub tick: u64,
     /// Send MIDI clock.
     pub send_clock: bool,
-    /// Map of tick to queued commands.
+    /// Map of tick to queued raw messages.
     queue: HashMap<u64, Vec<u8>>,
     /// Map of allocated notes (channel, note) and their expiration tick. This is to avoid
     /// accidentally attempting to concurrently play the same note; a note may already be stopped
@@ -240,9 +240,9 @@ impl MidiSequencer {
     }
 
     /// Queue note messages based on raw MIDI parameters.
-    fn queue_raw(
+    fn queue_midi(
         &mut self,
-        channel: u8,
+        chan: u8,
         note: u8,
         on_velocity: u8,
         off_velocity: u8,
@@ -250,8 +250,8 @@ impl MidiSequencer {
         ticks: Option<u64>,
         skip_allocated: bool,
     ) -> Result<()> {
-        if channel > 15 {
-            return Err(format!("invalid channel: {}", channel));
+        if chan > 15 {
+            return Err(format!("invalid channel: {}", chan));
         }
         if note > 127 {
             return Err(format!("invalid note: {}", note));
@@ -263,7 +263,7 @@ impl MidiSequencer {
             return Err(format!("invalid velocity: {}", off_velocity));
         }
 
-        if let Some(expiration) = self.allocated.get(&(channel, note)) {
+        if let Some(expiration) = self.allocated.get(&(chan, note)) {
             if begin_tick < *expiration {
                 match ticks {
                     Some(0) => {
@@ -290,23 +290,23 @@ impl MidiSequencer {
 
         if end_tick != begin_tick {
             // If this note does not stop on this tick, start playing.
-            let on_cmd = MidiMsg::NoteOn(channel, note, on_velocity);
+            let on_msg = MidiMsg::NoteOn(chan, note, on_velocity);
             self.queue
                 .entry(begin_tick)
                 .or_default()
-                .append(&mut on_cmd.into());
+                .append(&mut on_msg.into());
         }
 
         if end_tick != u64::MAX {
             // If this is not a forever-playing note, add a stop.
-            let off_cmd = MidiMsg::NoteOff(channel, note, off_velocity);
+            let off_msg = MidiMsg::NoteOff(chan, note, off_velocity);
             self.queue
                 .entry(end_tick)
                 .or_default()
-                .append(&mut off_cmd.into());
+                .append(&mut off_msg.into());
         }
 
-        self.allocated.insert((channel, note), end_tick);
+        self.allocated.insert((chan, note), end_tick);
 
         Ok(())
     }
@@ -315,7 +315,7 @@ impl MidiSequencer {
     pub fn queue(
         &mut self,
         tick_clock: &TickClock,
-        channel: u8,
+        chan: u8,
         note: &Note,
         velocity: &Velocity,
         duration: &Duration,
@@ -328,8 +328,8 @@ impl MidiSequencer {
             0
         };
         let ticks = tick_clock.into_ticks(duration);
-        self.queue_raw(
-            channel,
+        self.queue_midi(
+            chan,
             midi_note,
             velocity,
             off_velocity,
@@ -344,7 +344,7 @@ impl MidiSequencer {
     pub fn queue_sequence(
         &mut self,
         tick_clock: &TickClock,
-        channel: u8,
+        chan: u8,
         notes: &[Note],
         velocity: &Velocity,
         unit_duration: &Duration,
@@ -363,8 +363,8 @@ impl MidiSequencer {
             if pulse {
                 let note = notes_stream.next().unwrap();
                 let midi_note = Result::from(note)?;
-                self.queue_raw(
-                    channel,
+                self.queue_midi(
+                    chan,
                     midi_note,
                     velocity,
                     0,
@@ -379,6 +379,26 @@ impl MidiSequencer {
         Ok(())
     }
 
+    pub fn queue_control(&mut self, chan: u8, control: u8, value: u8) -> Result<()> {
+        if chan > 15 {
+            return Err(format!("invalid channel: {}", chan));
+        }
+        if control > 127 {
+            return Err(format!("invalid control: {}", control));
+        }
+        if value > 127 {
+            return Err(format!("invalid value: {}", value));
+        }
+
+        let msg = MidiMsg::Cc(chan, control, value);
+        self.queue
+            .entry(self.tick)
+            .or_default()
+            .append(&mut msg.into());
+
+        Ok(())
+    }
+
     #[must_use]
     pub fn stop(&mut self) -> Vec<u8> {
         let mut stop_msgs = vec![];
@@ -386,8 +406,8 @@ impl MidiSequencer {
         // Note: Beware non-stable iteration order.
         for ((chan, note), end_tick) in self.allocated.drain() {
             if self.tick <= end_tick {
-                let off_cmd = MidiMsg::NoteOff(chan, note, 0);
-                stop_msgs.append(&mut off_cmd.into());
+                let off_msg = MidiMsg::NoteOff(chan, note, 0);
+                stop_msgs.append(&mut off_msg.into());
             }
         }
 
@@ -412,6 +432,7 @@ pub enum SeqCommand {
     Jmp(isize),
     QueueNote(u8, Note, Velocity, Duration),
     QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
+    QueueControl(u8, u8, u8),
 }
 
 impl std::str::FromStr for SeqCommand {
@@ -448,6 +469,12 @@ impl std::str::FromStr for SeqCommand {
             Ok(SeqCommand::QueueSequence(
                 chan, notes, velocity, duration, pulses, length, offset,
             ))
+        } else if let Some(suffix) = s.strip_prefix("cc ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let control: u8 = parts[1].parse().map_err(|e| format!("{}", e))?;
+            let value: u8 = parts[2].parse().map_err(|e| format!("{}", e))?;
+            Ok(SeqCommand::QueueControl(chan, control, value))
         } else {
             Err(format!("unknown command: {}", s))
         }
@@ -457,6 +484,9 @@ impl std::str::FromStr for SeqCommand {
 impl Display for SeqCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            SeqCommand::Tick(duration) => {
+                write!(f, "+ {}", duration)
+            }
             SeqCommand::Jmp(offset) => write!(f, "j {}", offset),
             SeqCommand::QueueNote(chan, note, velocity, duration) => {
                 write!(f, "n {} {} {} {}", chan, note, velocity, duration)
@@ -475,9 +505,7 @@ impl Display for SeqCommand {
                     offset
                 )
             }
-            SeqCommand::Tick(duration) => {
-                write!(f, "+ {}", duration)
-            }
+            SeqCommand::QueueControl(chan, cc, val) => write!(f, "cc {} {} {}", chan, cc, val),
         }
     }
 }
@@ -905,6 +933,32 @@ mod tests {
             stop_msgs == vec![0x80, 60, 0, 0x83, 61, 0]
                 || stop_msgs == vec![0x83, 61, 0, 0x80, 60, 0]
         );
+    }
+
+    #[test]
+    fn control_change() {
+        let mut clock = TickClock::default();
+        let mut seq = MidiSequencer::default();
+
+        seq.queue(
+            &clock,
+            0,
+            &Note::Raw(60),
+            &Velocity::Raw(100),
+            &Duration::Ticks(1),
+        )
+        .unwrap();
+
+        seq.queue_control(3, 5, 42).unwrap();
+
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100, 0xb3, 5, 42]);
+        clock.await_tick();
+
+        assert_eq!(seq.tick(&clock), vec![0x80, 60, 0]);
+        clock.await_tick();
+
+        seq.queue_control(0, 8, 111).unwrap();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0xb0, 8, 111]);
     }
 
     #[test]

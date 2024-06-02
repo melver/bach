@@ -91,6 +91,11 @@ fn main() {
                     println!("<! failed to queue: {}", e);
                 }
             }
+            SeqCommand::QueueControl(c, cc, v) => {
+                if let Err(e) = seq.queue_control(*c, *cc, *v) {
+                    println!("<! failed to queue: {}", e);
+                }
+            }
         }
         cmd_idx += 1;
     }
