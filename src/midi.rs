@@ -1,6 +1,9 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
-// This is defined by the MIDI spec.
+//! MIDI specification definitions. Defines basic MIDI message types and how to convert them to a
+//! stream of bytes.
+
+/// This is defined by the MIDI spec.
 pub const CLOCKS_PER_QN: u32 = 24;
 
 /// Raw abstracted MIDI commands.
@@ -13,9 +16,7 @@ pub enum MidiMsg {
 }
 
 /// Converts a typed MidiMsg to raw MIDI bytes.
-///
-/// References:
-///   1. https://midi.org/expanded-midi-1-0-messages-list
+/// [Source](https://midi.org/expanded-midi-1-0-messages-list).
 impl From<MidiMsg> for Vec<u8> {
     fn from(cmd: MidiMsg) -> Vec<u8> {
         match cmd {

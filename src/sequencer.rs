@@ -1,5 +1,7 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+//! MIDI sequencer implementation that takes care of timing and generating MIDI messages.
+
 use crate::midi::*;
 use crate::units::*;
 use crate::vm::*;
@@ -184,6 +186,8 @@ impl MidiSequencer {
         }
     }
 
+    /// Advance to the next tick and return the MIDI message stream to be sent to a compatible MIDI
+    /// device.
     #[must_use]
     pub fn tick(&mut self, tick_clock: &TickClock) -> Vec<u8> {
         // TickClock::await_tick() should be called after we're done with all processing.
@@ -205,6 +209,7 @@ impl MidiSequencer {
         }
     }
 
+    /// Advance until `delta` duration has elapsed, and for each tick calls back `send_midi`.
     pub fn tick_until<F>(&mut self, tick_clock: &mut TickClock, delta: &Duration, send_midi: &mut F)
     where
         F: FnMut(&[u8]),
@@ -220,6 +225,7 @@ impl MidiSequencer {
         }
     }
 
+    /// Fast-forwards until `delta` duration has elapsed, and for each tick calls back `send_midi`.
     pub fn forward_until<F>(
         &mut self,
         tick_clock: &mut TickClock,
@@ -379,6 +385,7 @@ impl MidiSequencer {
         Ok(())
     }
 
+    /// Queue a Control Change message at the current tick.
     pub fn queue_control(&mut self, chan: u8, control: u8, value: u8) -> Result<()> {
         if chan > 15 {
             return Err(format!("invalid channel: {}", chan));
@@ -399,6 +406,8 @@ impl MidiSequencer {
         Ok(())
     }
 
+    /// Stop playing and return the last stream of MIDI messages to stop playing any currently
+    /// playing notes. Resets the current tick back to 0.
     #[must_use]
     pub fn stop(&mut self) -> Vec<u8> {
         let mut stop_msgs = vec![];
@@ -426,6 +435,8 @@ impl Default for MidiSequencer {
 
 // === Clips ===================================================================
 
+/// SeqCommand is a single instruction of a Clip. It implements convenient conversions to and from
+/// a simple DSL which may be used to store instructions for the MidiSequencer.
 #[derive(Clone, Debug)]
 pub enum SeqCommand {
     Tick(Duration),

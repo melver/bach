@@ -1,5 +1,7 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+//! Simple framework for implementing Genetic Algorithms.
+
 use rand::Rng;
 use std::cmp;
 use std::collections::HashSet;

@@ -1,5 +1,7 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+//! A simple stack-based virtual machine.
+
 use crate::Result;
 use std::cell::RefCell;
 use std::cmp;

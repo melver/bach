@@ -1,5 +1,7 @@
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+//! Various units that are useful to express music, together with conversions to and from strings.
+
 use crate::Result;
 use std::fmt::{self, Display};
 use std::str::FromStr;

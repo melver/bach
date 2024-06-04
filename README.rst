@@ -1,8 +1,13 @@
-==========
-Bach Tools
-==========
+=============================
+Bach: MIDI Command-Line Tools
+=============================
 
-Simple tools to work with MIDI.
+Simple CLI tools to work with MIDI.
+
+Usage
+=====
+
+TODO
 
 Testing
 =======

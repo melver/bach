@@ -1,12 +1,12 @@
-// Simple tracker that reads from a text file and outputs real-time MIDI to stdout:
-//
-//  # comment
-//  n <chan> <note> <velocity> <duration>
-//  ... more notes ...
-//  # advance beats
-//  +<duration>
-//
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
+
+//! Simple tracker that reads from a text file and outputs real-time MIDI:
+//!
+//!  # comment
+//!  n <chan> <note> <velocity> <duration>
+//!  ... more notes ...
+//!  # advance beats
+//!  +<duration>
 
 use bach::sequencer::{self, SeqCommand};
 use bach::units::*;
