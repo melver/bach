@@ -1,4 +1,4 @@
-//
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 //! Simple interpreter that reads program from a text file and outputs real-time MIDI to stdout.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 //! Simple framework for implementing Genetic Algorithms.

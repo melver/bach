@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
 //! Various units that are useful to express music, together with conversions to and from strings.

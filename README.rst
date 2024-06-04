@@ -27,3 +27,9 @@ of `fluidsynth <https://www.fluidsynth.org>`_:
    ... pipe raw MIDI to /dev/snd/midiC0D2 ...
    # disconnect when done
    aconnect -x
+
+License
+=======
+
+The Bach library is licensed under the terms of the Apache license. See LICENSE
+for more information.
