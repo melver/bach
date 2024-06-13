@@ -31,6 +31,8 @@ struct Config {
     channels: (u8, u8),
     beats_per_bar: u32,
     note_scale: Vec<Note>,
+    note_min: Vec<Note>,
+    note_max: Vec<Note>,
     chord_weight: f32,
     melody_weight: f32,
     chan_balance_weight: f32,
@@ -54,6 +56,7 @@ impl Config {
 
         let path = std::env::args().nth(1).expect("must provide config file");
         if path == "-" {
+            println!("<- using default configuration: {:?}", self);
             return;
         }
 
@@ -81,6 +84,12 @@ impl Config {
             } else if let Some(suffix) = line.strip_prefix("note_scale ") {
                 self.note_scale = suffix.split(',').map(|s| s.parse().unwrap()).collect();
                 assert!(!self.note_scale.is_empty());
+            } else if let Some(suffix) = line.strip_prefix("note_min ") {
+                self.note_min = suffix.split(',').map(|s| s.parse().unwrap()).collect();
+                assert!(!self.note_min.is_empty());
+            } else if let Some(suffix) = line.strip_prefix("note_max ") {
+                self.note_max = suffix.split(',').map(|s| s.parse().unwrap()).collect();
+                assert!(!self.note_max.is_empty());
             } else if let Some(suffix) = line.strip_prefix("chord_weight ") {
                 self.chord_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("melody_weight ") {
@@ -125,16 +134,21 @@ impl Config {
         self.beats_per_bar.ilog2()
     }
 
-    fn map_note(&self, chan: u8, note: i8) -> Note {
+    // Returns a note in the configured scale and the index into the list of note scales.
+    fn map_note(&self, chan: u8, note: i8) -> (usize, Note) {
         let note_scale = &cfg().note_scale;
-        match note_scale[chan as usize % note_scale.len()] {
-            Note::Raw(o) => Note::Raw(o + note),
-            Note::Maj(k, o) => Note::Maj(k, o + note),
-            Note::Min(k, o) => Note::Min(k, o + note),
-            Note::HMin(k, o) => Note::HMin(k, o + note),
-            Note::MMin(k, o) => Note::MMin(k, o + note),
-            Note::Phr(k, o) => Note::Phr(k, o + note),
-        }
+        let idx = chan as usize % note_scale.len();
+        (
+            idx,
+            match note_scale[idx] {
+                Note::Raw(o) => Note::Raw(o + note),
+                Note::Maj(k, o) => Note::Maj(k, o + note),
+                Note::Min(k, o) => Note::Min(k, o + note),
+                Note::HMin(k, o) => Note::HMin(k, o + note),
+                Note::MMin(k, o) => Note::MMin(k, o + note),
+                Note::Phr(k, o) => Note::Phr(k, o + note),
+            },
+        )
     }
 
     fn population_path(&self) -> &Path {
@@ -148,6 +162,8 @@ static mut CONFIG: Config = Config {
     channels: (0, 2),
     beats_per_bar: 8,
     note_scale: vec![],
+    note_min: vec![],
+    note_max: vec![],
     skip_allocated: false,
     chord_weight: 1.0,
     melody_weight: 1.0,
@@ -274,18 +290,35 @@ impl ClipGenome {
     }
 
     fn gen_note(&self, chan: u8, rng: &mut ThreadRng) -> Note {
-        // Skew probility to middle octaves.
-        let x = rng.gen_range(-1.0..=1.0);
-        let note_offset = if rng.gen_bool(0.9) {
-            x * 7.9
-        } else {
-            let y = rng.gen_range(-1.0..=1.0);
-            x * y * 14.9
-        } as i8;
-        let note = cfg().map_note(chan, note_offset);
-        // Detect invalid notes early.
-        assert!(Result::from(&note).is_ok(), "try a different scale");
-        note
+        loop {
+            // Skew probility to middle octaves.
+            let x = rng.gen_range(-1.0..=1.0);
+            let note_offset = if rng.gen_bool(0.9) {
+                x * 7.9
+            } else {
+                let y = rng.gen_range(-1.0..=1.0);
+                x * y * 14.9
+            } as i8;
+
+            let (idx, note) = cfg().map_note(chan, note_offset);
+            let raw_note = Result::from(&note).expect("try a different note_scale");
+
+            if let Some(note_min) = cfg().note_min.get(idx) {
+                let raw_note_min = Result::from(note_min).expect("try a different note_min");
+                if raw_note < raw_note_min {
+                    continue; // retry
+                }
+            }
+
+            if let Some(note_max) = cfg().note_max.get(idx) {
+                let raw_note_max = Result::from(note_max).expect("try a different note_max");
+                if raw_note > raw_note_max {
+                    continue; // retry
+                }
+            }
+
+            return note;
+        }
     }
 
     fn gen_note_list(&self, chan: u8, rng: &mut ThreadRng) -> Vec<Note> {

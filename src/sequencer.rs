@@ -149,7 +149,7 @@ impl TickClock {
         }
     }
 
-    /// Return the current elapsed time in quarter notes and absolute time.
+    /// Return the current elapsed time in beats and absolute time.
     pub fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
         let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
         (
