@@ -278,6 +278,12 @@ impl ClipGenome {
         Ok(())
     }
 
+    fn dump(&self) {
+        for i in 0..self.clip.len() {
+            println!("<{}> {}", i, self.clip[i]);
+        }
+    }
+
     fn fitness_as_str(&self) -> String {
         match self.fitness {
             Some(f) => format!("{}", f),
@@ -560,6 +566,8 @@ struct Prog {
     pool: RefCell<ga::GenomePool<ClipGenome>>,
     /// Auto-evaluate until generation.
     eval_until: Cell<u64>,
+    /// Prefix clip.
+    prefix_clip: RefCell<ClipGenome>,
 }
 
 impl Prog {
@@ -588,6 +596,7 @@ impl Prog {
                 cfg().mutation_probability,
             )),
             eval_until: Cell::new(0),
+            prefix_clip: RefCell::new(ClipGenome::from(vec![])),
         }
     }
 
@@ -612,15 +621,23 @@ impl Prog {
 
     fn play(&self, clip: &ClipGenome) {
         println!("<- begin clip; {}", clip.comment);
+        let prefix_clip = self.prefix_clip.borrow();
+        let cmd_start: isize = -(prefix_clip.clip.len() as isize);
         let mut skip_cmd = HashSet::new();
-        let mut cmd_idx: isize = 0;
+        let mut cmd_idx: isize = cmd_start;
         let mut silence = true;
         while cmd_idx < clip.clip.len() as isize {
             if !is_running() {
                 return;
             }
 
-            let seq_cmd = &clip.clip[cmd_idx as usize];
+            // Pick command from prefix if negative index.
+            let seq_cmd = if cmd_idx < 0 {
+                &prefix_clip.clip[(cmd_idx - cmd_start) as usize]
+            } else {
+                &clip.clip[cmd_idx as usize]
+            };
+
             if !skip_cmd.contains(&cmd_idx) {
                 let (elapsed_qns, elapsed_real) = self.clock.borrow().elapsed(cfg().beats_per_bar);
                 println!(
@@ -642,7 +659,7 @@ impl Prog {
                 }
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
-                        cmd_idx = cmp::max(0, cmd_idx + *offset);
+                        cmd_idx = cmp::max(cmd_start, cmd_idx + *offset);
                     }
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
@@ -1006,9 +1023,7 @@ impl Prog {
                             clip.comment = suffix.trim().into();
                         }
                     } else if cmd == "d" {
-                        for i in 0..clip.clip.len() {
-                            println!("<{}> {}", i, clip.clip[i]);
-                        }
+                        clip.dump();
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
                         let parts: Vec<&str> = suffix.split('=').map(|s| s.trim()).collect();
                         if parts.len() < 2 {
@@ -1202,6 +1217,16 @@ impl Prog {
                                 Err(e) => println!("<! invalid mutation probability: {}", e),
                             }
                         }
+                    } else if let Some(suffix) = cmd.strip_prefix("pfx") {
+                        let path = suffix.trim();
+                        let mut prefix_clip = self.prefix_clip.borrow_mut();
+                        if path.is_empty() {
+                            prefix_clip.dump();
+                        } else if path == "-" {
+                            prefix_clip.clip.clear();
+                        } else if let Err(e) = prefix_clip.deserialize(Path::new(path)) {
+                            println!("<! could not read file {}: {}", path, e);
+                        }
                     } else if cmd == "q" {
                         return false;
                     } else if cmd.to_lowercase().starts_with("s ") {
@@ -1289,6 +1314,7 @@ impl Prog {
                         println!("  i                      : info");
                         println!("  l <count> <prefix>     : load <count> genomes into population");
                         println!("  mut <val>              : change mutation probability to <val>");
+                        println!("  pfx <file>             : load prefix clip from <file>");
                         println!("  q                      : quit");
                         println!("  s/S <idx or @file>,... : play/loop chained clips (song mode)");
                         println!("  w <prefix>             : write population");
