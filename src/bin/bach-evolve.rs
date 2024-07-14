@@ -1014,7 +1014,9 @@ impl Prog {
 
             match &mut clip {
                 Some(clip) => {
-                    if cmd == "b" {
+                    if cmd == "a" {
+                        self.eval(clip);
+                    } else if cmd == "b" {
                         return true;
                     } else if let Some(suffix) = cmd.strip_prefix('c') {
                         if suffix.is_empty() {
@@ -1082,6 +1084,7 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("clip help:");
+                        println!("  a               : auto-score fitness value");
                         println!("  b               : back");
                         println!("  c <comment>     : comment");
                         println!("  d               : dump");
