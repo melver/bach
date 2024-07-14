@@ -1050,12 +1050,16 @@ impl Prog {
                             }
                         }
                     } else if let Some(suffix) = cmd.to_lowercase().strip_prefix("f ") {
-                        match suffix.parse() {
-                            Ok(f) => clip.fitness = Some(f),
+                        let (base, add_arg) = match suffix.trim().strip_prefix("+= ") {
+                            Some(s) => (clip.fitness.unwrap_or(0.0), s),
+                            None => (0.0, suffix),
+                        };
+                        match add_arg.trim().parse::<f32>() {
+                            Ok(f) => clip.fitness = Some(base + f),
                             Err(e) => println!("<! invalid argument: {}", e),
                         }
-                        // Capital version immediately returns.
                         if cmd.starts_with('F') {
+                            // Upper version immediately returns for convenience.
                             return true;
                         }
                     } else if cmd == "i" {
@@ -1089,7 +1093,7 @@ impl Prog {
                         println!("  c <comment>     : comment");
                         println!("  d               : dump");
                         println!("  e <idx> = <cmd> : edit command at index");
-                        println!("  f/F <val>       : assign fitness value / back");
+                        println!("  f/F [+=] <val>  : assign fitness value / ..back");
                         println!("  i               : info");
                         println!("  l <file>        : load from file");
                         println!("  p/P             : play / loop");
@@ -1239,7 +1243,7 @@ impl Prog {
                             let part = match parts.next() {
                                 Some(s) => s,
                                 None => {
-                                    // Capital version of command will keep looping.
+                                    // Upper version of command will keep looping.
                                     if cmd.starts_with('S') {
                                         parts = suffix.split(',');
                                         continue;
