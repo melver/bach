@@ -435,8 +435,9 @@ impl Genome for ClipGenome {
     fn mutate(&mut self, mut_prob: f32) {
         let mut rng = rand::thread_rng();
         let mut used = HashSet::new();
-        let mut to_mutate = (self.clip.len() as f32 * mut_prob) as usize;
-        if to_mutate == 0 && rng.gen_bool(mut_prob as f64) {
+        let to_mutate_precise = self.clip.len() as f32 * mut_prob;
+        let mut to_mutate = to_mutate_precise as usize;
+        if to_mutate == 0 && rng.gen_bool(to_mutate_precise as f64) {
             to_mutate = 1;
         }
         while to_mutate != 0 {
