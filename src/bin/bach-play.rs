@@ -78,7 +78,7 @@ fn main() {
             SeqCommand::Tick(delta) => seq.tick_until(&mut clock, delta, &mut midi_write),
             SeqCommand::Jmp(offset) => {
                 if skip_cmd.insert(cmd_idx) {
-                    cmd_idx = std::cmp::max(0, cmd_idx + *offset);
+                    cmd_idx = std::cmp::max(0, cmd_idx + *offset as isize);
                 }
             }
             SeqCommand::QueueNote(c, n, v, d) => {

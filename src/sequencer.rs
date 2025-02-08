@@ -441,7 +441,7 @@ impl Default for MidiSequencer {
 #[derive(Clone, Debug)]
 pub enum SeqCommand {
     Tick(Duration),
-    Jmp(isize),
+    Jmp(i32),
     QueueNote(u8, Note, Velocity, Duration),
     QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
     QueueControl(u8, u8, u8),

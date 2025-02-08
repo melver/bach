@@ -658,7 +658,7 @@ impl Prog {
                 }
                 SeqCommand::Jmp(offset) => {
                     if skip_cmd.insert(cmd_idx) {
-                        cmd_idx = cmp::max(cmd_start, cmd_idx + *offset);
+                        cmd_idx = cmp::max(cmd_start, cmd_idx + *offset as isize);
                     }
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
@@ -756,7 +756,7 @@ impl Prog {
                     }
                     SeqCommand::Jmp(offset) => {
                         if skip_cmd.insert(cmd_idx) {
-                            cmd_idx = cmp::max(0, cmd_idx + *offset);
+                            cmd_idx = cmp::max(0, cmd_idx + *offset as isize);
                         }
                     }
                     SeqCommand::QueueNote(c, n, v, d) => {
