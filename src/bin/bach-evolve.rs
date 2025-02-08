@@ -12,14 +12,14 @@ use rand::{rngs::ThreadRng, Rng};
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::collections::hash_map::DefaultHasher; // FIXME: use std::hash::DefaultHasher
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use std::ptr::addr_of;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use std::thread;
 
 // === Config ==================================================================
@@ -50,14 +50,37 @@ struct Config {
 }
 
 impl Config {
-    fn init(&mut self) {
-        // Defaults that need to allocate and can't be done statically.
-        self.note_scale = vec![Note::Maj(60, 0)];
+    fn new() -> Self {
+        Self {
+            send_clock: true,
+            cc: vec![],
+            channels: (0, 2),
+            beats_per_bar: 8,
+            note_scale: vec![Note::Maj(60, 0)],
+            note_min: vec![],
+            note_max: vec![],
+            skip_allocated: false,
+            chord_weight: 1.0,
+            melody_weight: 1.0,
+            chan_balance_weight: 1.0,
+            rest_weight: -1.0,
+            dup_weight: -1.0,
+            clip_init_len: 30,
+            clip_fixed_len: true,
+            song_continue: true,
+            clip_tail: Duration::Beats(3, 1),
+            population_size: 64,
+            mutation_probability: 0.02,
+            tournament_size: 2,
+            population_path: String::new(),
+        }
+    }
 
+    fn with_config_file(mut self) -> Self {
         let path = std::env::args().nth(1).expect("must provide config file");
         if path == "-" {
             println!("<- using default configuration: {:?}", self);
-            return;
+            return self;
         }
 
         let file = fs::File::open(path).unwrap();
@@ -124,6 +147,7 @@ impl Config {
         }
 
         println!("<- loaded configuration: {:?}", self);
+        self
     }
 
     fn channel_count(&self) -> u8 {
@@ -156,45 +180,19 @@ impl Config {
     }
 }
 
-static mut CONFIG: Config = Config {
-    send_clock: true,
-    cc: vec![],
-    channels: (0, 2),
-    beats_per_bar: 8,
-    note_scale: vec![],
-    note_min: vec![],
-    note_max: vec![],
-    skip_allocated: false,
-    chord_weight: 1.0,
-    melody_weight: 1.0,
-    chan_balance_weight: 1.0,
-    rest_weight: -1.0,
-    dup_weight: -1.0,
-    clip_init_len: 30,
-    clip_fixed_len: true,
-    song_continue: true,
-    clip_tail: Duration::Beats(3, 1),
-    population_size: 64,
-    mutation_probability: 0.02,
-    tournament_size: 2,
-    population_path: String::new(),
-};
+static CONFIG: LazyLock<Config> = LazyLock::new(|| Config::new().with_config_file());
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn cfg() -> &'static Config {
-    // SAFETY: Initialized once at startup.
-    unsafe { &*addr_of!(CONFIG) }
+    &CONFIG
 }
 
-static mut RUNNING: AtomicBool = AtomicBool::new(true);
-
 fn is_running() -> bool {
-    unsafe { RUNNING.load(Ordering::Relaxed) }
+    RUNNING.load(Ordering::Relaxed)
 }
 
 fn continue_running() {
-    unsafe {
-        RUNNING.store(true, Ordering::Relaxed);
-    }
+    RUNNING.store(true, Ordering::Relaxed);
 }
 
 // === ClipGenome ==============================================================
@@ -1400,18 +1398,12 @@ impl Drop for Prog {
 }
 
 fn main() {
-    unsafe {
-        CONFIG.init();
-    }
-
     let mut signals = Signals::new([SIGINT]).unwrap();
     let sig_handle = signals.handle();
     let sig_handler = thread::spawn(move || {
         for _ in &mut signals {
             println!("<- stopping ...");
-            unsafe {
-                RUNNING.store(false, Ordering::Relaxed);
-            }
+            RUNNING.store(false, Ordering::Relaxed);
         }
     });
 
