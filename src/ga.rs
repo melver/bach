@@ -199,8 +199,8 @@ impl<G: Genome + Default> GenomePool<G> {
 
     /// Select `len` uniformly distributed indices into `population`.
     pub fn select_uniform(&self, len: usize) -> Vec<GenomeRef> {
-        let mut rng = rand::thread_rng();
-        self.select_by(len, || rng.gen_range(0..self.population.len()))
+        let mut rng = rand::rng();
+        self.select_by(len, || rng.random_range(0..self.population.len()))
     }
 
     /// Select the oldest Genome of `population`. If there are multiple genomes with the same age,
@@ -364,13 +364,13 @@ mod tests {
         }
 
         fn mutate(&mut self, mut_prob: f32) {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             let mut used = HashSet::new();
             let mut to_mutate = (self.genome.len() as f32 * mut_prob) as usize;
             while to_mutate != 0 {
-                let idx = rng.gen_range(0..self.genome.len());
+                let idx = rng.random_range(0..self.genome.len());
                 if used.insert(idx) {
-                    self.genome[idx] += rng.gen_range(-2.0..2.0);
+                    self.genome[idx] += rng.random_range(-2.0..2.0);
                     to_mutate -= 1;
                 }
             }
@@ -390,7 +390,7 @@ mod tests {
 
         fn crossover(&self, other: &Self, mut_prob: f32) -> Vec<Self> {
             super::default_crossover(self, other, mut_prob, true, false, &mut |len| {
-                rand::thread_rng().gen_range(0..len)
+                rand::rng().random_range(0..len)
             })
         }
 

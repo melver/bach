@@ -354,10 +354,10 @@ mod tests {
 
     #[test]
     fn rand_scales() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..10000 {
             let converted: Result<u8> =
-                (&Note::Maj(rng.gen_range(55..65), rng.gen_range(-20..=20))).into();
+                (&Note::Maj(rng.random_range(55..65), rng.random_range(-20..=20))).into();
             assert!(converted.is_ok(), "{:?}", converted);
         }
     }

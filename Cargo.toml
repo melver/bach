@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Marco Elver <me@marcoelver.com>"]
 
 [dependencies]
-rand = "0.8.5"
+rand = "0.9.0"
 signal-hook = "0.3.17"
 
 # Build smaller binaries in release mode.

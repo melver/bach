@@ -290,17 +290,17 @@ impl ClipGenome {
     }
 
     fn gen_channel(&self, rng: &mut ThreadRng) -> u8 {
-        rng.gen_range(cfg().channels.0..=cfg().channels.1)
+        rng.random_range(cfg().channels.0..=cfg().channels.1)
     }
 
     fn gen_note(&self, chan: u8, rng: &mut ThreadRng) -> Note {
         loop {
             // Skew probility to middle octaves.
-            let x = rng.gen_range(-1.0..=1.0);
-            let note_offset = if rng.gen_bool(0.9) {
+            let x = rng.random_range(-1.0..=1.0);
+            let note_offset = if rng.random_bool(0.9) {
                 x * 7.9
             } else {
-                let y = rng.gen_range(-1.0..=1.0);
+                let y = rng.random_range(-1.0..=1.0);
                 x * y * 14.9
             } as i8;
 
@@ -326,14 +326,14 @@ impl ClipGenome {
     }
 
     fn gen_note_list(&self, chan: u8, rng: &mut ThreadRng) -> Vec<Note> {
-        (0..rng.gen_range(1..10))
+        (0..rng.random_range(1..10))
             .map(|_| self.gen_note(chan, rng))
             .collect()
     }
 
     fn gen_velocity(&self, rng: &mut ThreadRng) -> Velocity {
-        let x = rng.gen_range(-1.0..=1.0);
-        let y = rng.gen_range(-1.0..=1.0);
+        let x = rng.random_range(-1.0..=1.0);
+        let y = rng.random_range(-1.0..=1.0);
         match (x * y * 3.9) as i8 {
             -3 => Velocity::Pp,
             -2 => Velocity::P,
@@ -348,13 +348,13 @@ impl ClipGenome {
 
     fn gen_duration(&self, rng: &mut ThreadRng, only_beats: bool) -> Duration {
         let beats = Duration::Beats(
-            1 << rng.gen_range(0..=cfg().beats_per_bar_order()),
+            1 << rng.random_range(0..=cfg().beats_per_bar_order()),
             cfg().beats_per_bar,
         );
         if only_beats {
             beats
         } else {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..=9 => Duration::Begin,
                 10..=19 => Duration::End,
                 20..=99 => beats,
@@ -365,9 +365,9 @@ impl ClipGenome {
 
     fn gen_euclidean_params(&self, rng: &mut ThreadRng) -> (u32, u32, u32) {
         loop {
-            let pulses = rng.gen_range(2..=16);
-            let len = rng.gen_range(pulses..=32);
-            let offset = rng.gen_range(0..len);
+            let pulses = rng.random_range(2..=16);
+            let len = rng.random_range(pulses..=32);
+            let offset = rng.random_range(0..len);
             if pulses < len / 4 {
                 // Too few pulses, try again.
                 continue;
@@ -382,8 +382,8 @@ impl ClipGenome {
         let extension_weight = cmp::max(1, 8 / (cfg().cc.len() + 1));
         let extension_range = cfg().cc.len() * extension_weight;
 
-        match rng.gen_range(0..(100 + extension_range)) {
-            0..=7 => SeqCommand::Jmp(rng.gen_range(-20..=0)),
+        match rng.random_range(0..(100 + extension_range)) {
+            0..=7 => SeqCommand::Jmp(rng.random_range(-20..=0)),
             8..=19 => {
                 let chan = self.gen_channel(rng);
                 SeqCommand::QueueNote(
@@ -411,7 +411,7 @@ impl ClipGenome {
                 let extension_idx: usize = rnd.wrapping_sub(100) / extension_weight;
                 if extension_idx < cfg().cc.len() {
                     let (chan, control, range) = cfg().cc[extension_idx];
-                    SeqCommand::QueueControl(chan, control, rng.gen_range(range.0..=range.1))
+                    SeqCommand::QueueControl(chan, control, rng.random_range(range.0..=range.1))
                 } else {
                     unreachable!();
                 }
@@ -431,15 +431,15 @@ impl Genome for ClipGenome {
     }
 
     fn mutate(&mut self, mut_prob: f32) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut used = HashSet::new();
         let to_mutate_precise = self.clip.len() as f32 * mut_prob;
         let mut to_mutate = to_mutate_precise as usize;
-        if to_mutate == 0 && rng.gen_bool(to_mutate_precise as f64) {
+        if to_mutate == 0 && rng.random_bool(to_mutate_precise as f64) {
             to_mutate = 1;
         }
         while to_mutate != 0 {
-            let idx = rng.gen_range(0..self.clip.len());
+            let idx = rng.random_range(0..self.clip.len());
             if !used.insert(idx) {
                 continue;
             }
@@ -447,7 +447,7 @@ impl Genome for ClipGenome {
             self.clip[idx] = match &self.clip[idx] {
                 SeqCommand::Jmp(_) | SeqCommand::Tick(_) => self.gen_command(&mut rng),
                 SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                    match rng.gen_range(0..=3) {
+                    match rng.random_range(0..=3) {
                         0 => SeqCommand::QueueNote(
                             *chan,
                             self.gen_note(*chan, &mut rng),
@@ -478,7 +478,7 @@ impl Genome for ClipGenome {
                     pulses,
                     len,
                     offset,
-                ) => match rng.gen_range(0..=4) {
+                ) => match rng.random_range(0..=4) {
                     0 => SeqCommand::QueueSequence(
                         *chan,
                         self.gen_note_list(*chan, &mut rng),
@@ -539,7 +539,7 @@ impl Genome for ClipGenome {
             mut_prob,
             true,
             cfg().clip_fixed_len,
-            &mut |len| rand::thread_rng().gen_range(0..len),
+            &mut |len| rand::rng().random_range(0..len),
         )
     }
 
