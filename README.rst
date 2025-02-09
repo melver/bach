@@ -2,12 +2,83 @@
 Bach: MIDI Command-Line Tools
 =============================
 
-Simple CLI tools to work with MIDI.
+Simple CLI tools to work with MIDI clips.
 
 Usage
 =====
 
-TODO
+bach-evolve
+-----------
+
+An interactive command-line debugger-style tool for evolving MIDI clips. The
+basic syntax is::
+
+   bach-evolve <config> <bpm> <ppqn> <midi-device>
+
+Parameters:
+
+* `<config>`: Configuration file path (use "-" for defaults)
+* `<bpm>`: Beats per minute
+* `<ppqn>`: Pulses per quarter note (typically 48)
+* `<midi-device>`: MIDI output device
+
+Interactive Commands
+--------------------
+
+Main Mode::
+
+  a <count>              : auto-evolve next <count> generations
+  bpm <val>              : change BPM
+  c                      : continue
+  e <idx>                : edit clip
+  i                      : info
+  l <count> <prefix>     : load <count> genomes into population
+  mut <val>              : change mutation probability to <val>
+  pfx <file>             : load prefix clip from <file>
+  q                      : quit
+  s/S <idx or @file>,... : play/loop chained clips (song mode)
+  w <prefix>             : write population
+
+Clip Editor Mode::
+
+  a               : auto-score fitness value
+  b               : back
+  c <comment>     : comment
+  d               : dump
+  e <idx> = <cmd> : edit command at index
+  f/F [+=] <val>  : assign fitness value / ..back
+  i               : info
+  l <file>        : load from file
+  p/P             : play / loop
+  q               : quit
+  w <file>        : write
+
+Example Usage
+-------------
+
+Interactive Evolution::
+
+   # start with default settings at 120 BPM
+   $ bach-evolve - 120 48 /dev/snd/midiC0D2
+   
+   >>> a 10    # auto-evolve for 10 generations
+   >>> i       # show population info
+   
+   >>> e best  # pick best-scoring clip
+   >>> p       # play
+   >>> b       # back to main
+   
+   >>> e 2     # edit clip #2
+   >>> d       # dumps clip contents
+   >>> p       # play
+
+   >>> q       # quit
+
+The evolutionary process maintains a population of MIDI clips, each with:
+
+* fixed length (default 30 beats);
+* fitness score measuring musical quality;
+* generation number tracking its evolution.
 
 Testing
 =======
