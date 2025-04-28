@@ -168,7 +168,7 @@ impl Inst {
                     };
                     match o2 {
                         Op::Int(0) => Ok(offset),
-                        Op::Float(f) if f == 0.0 => Ok(offset),
+                        Op::Float(0.0) => Ok(offset),
                         _ => Ok(1),
                     }
                 }
