@@ -175,6 +175,8 @@ pub struct MidiSequencer {
     /// accidentally attempting to concurrently play the same note; a note may already be stopped
     /// but still be allocated, e.g. when part of a sequence that has not yet completed.
     allocated: HashMap<(u8, u8), u64>,
+    /// Internal channel mapping to route to different final channel.
+    chan_map: HashMap<u8, u8>,
 }
 
 impl MidiSequencer {
@@ -184,6 +186,7 @@ impl MidiSequencer {
             send_clock,
             queue: HashMap::new(),
             allocated: HashMap::new(),
+            chan_map: HashMap::new(),
         }
     }
 
@@ -257,6 +260,8 @@ impl MidiSequencer {
         ticks: Option<u64>,
         skip_allocated: bool,
     ) -> Result<()> {
+        let &chan = self.chan_map.get(&chan).unwrap_or(&chan);
+
         if chan > 15 {
             return Err(format!("invalid channel: {}", chan));
         }
@@ -388,6 +393,8 @@ impl MidiSequencer {
 
     /// Queue a Control Change message at the current tick.
     pub fn queue_control(&mut self, chan: u8, control: u8, value: u8) -> Result<()> {
+        let &chan = self.chan_map.get(&chan).unwrap_or(&chan);
+
         if chan > 15 {
             return Err(format!("invalid channel: {}", chan));
         }
@@ -425,6 +432,23 @@ impl MidiSequencer {
         self.queue.clear();
 
         stop_msgs
+    }
+
+    /// Map a channel to another, reflected in the MIDI message stream.
+    pub fn insert_chan_map(&mut self, from: u8, to: u8) -> Result<()> {
+        if from > 15 {
+            return Err(format!("invalid channel: {}", from));
+        }
+        if to > 15 {
+            return Err(format!("invalid channel: {}", to));
+        }
+
+        self.chan_map.insert(from, to);
+        Ok(())
+    }
+
+    pub fn chan_map(&self) -> &HashMap<u8, u8> {
+        &self.chan_map
     }
 }
 
@@ -971,6 +995,72 @@ mod tests {
 
         seq.queue_control(0, 8, 111).unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0xb0, 8, 111]);
+    }
+
+    #[test]
+    fn map_chan() {
+        let mut clock = TickClock::default();
+        let mut seq = MidiSequencer::default();
+
+        seq.queue(
+            &clock,
+            1,
+            &Note::Raw(60),
+            &Velocity::Raw(100),
+            &Duration::Ticks(1),
+        )
+        .unwrap();
+        seq.queue_control(2, 5, 42).unwrap();
+
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 100, 0xb2, 5, 42]);
+        clock.await_tick();
+
+        // Does not affect already queued commands, e.g. stop commands are still being sent to the
+        // right channel.
+        seq.insert_chan_map(1, 5).unwrap();
+        seq.insert_chan_map(2, 6).unwrap();
+
+        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        clock.await_tick();
+
+        seq.queue(
+            &clock,
+            1,
+            &Note::Raw(60),
+            &Velocity::Raw(100),
+            &Duration::Ticks(1),
+        )
+        .unwrap();
+        seq.queue(
+            &clock,
+            1,
+            &Note::Raw(61),
+            &Velocity::Raw(100),
+            &Duration::Ticks(2),
+        )
+        .unwrap();
+        seq.queue_control(2, 8, 111).unwrap();
+
+        assert_eq!(
+            seq.tick(&clock),
+            vec![0xf8, 0x95, 60, 100, 0x95, 61, 100, 0xb6, 8, 111]
+        );
+        clock.await_tick();
+
+        assert_eq!(seq.tick(&clock), vec![0x85, 60, 0]);
+        clock.await_tick();
+
+        // Stop still gets the right channel after new mapping.
+        seq.insert_chan_map(1, 1).unwrap();
+        assert_eq!(seq.stop(), vec![0x85, 61, 0]);
+
+        // Input value sanitization.
+        assert!(seq.insert_chan_map(30, 3).is_err());
+        assert!(seq.insert_chan_map(3, 30).is_err());
+        assert!(seq.chan_map().contains_key(&1));
+        assert!(seq.chan_map().contains_key(&2));
+        assert!(!seq.chan_map().contains_key(&3));
+        assert!(!seq.chan_map().contains_key(&30));
     }
 
     #[test]
