@@ -1126,6 +1126,31 @@ impl Prog {
                         }
                     } else if cmd == "c" {
                         return true;
+                    } else if let Some(suffix) = cmd.strip_prefix("chan") {
+                        let parts: Vec<&str> = suffix.split(' ').collect();
+                        if suffix.is_empty() {
+                            let seq = self.seq.borrow();
+                            // While the chan_map could be a BTreeMap to avoid this sorting, we
+                            // rarely want to display the mapping itself. Just sort it for display.
+                            let mut chan_map: Vec<_> = seq.chan_map().iter().collect();
+                            chan_map.sort();
+                            for (k, v) in chan_map {
+                                println!("channel {} -> {}", k, v);
+                            }
+                        } else if parts.len() < 3 {
+                            println!("<! requires 2 arguments");
+                        } else if let Ok(from) = parts[1].parse() {
+                            if let Ok(to) = parts[2].parse() {
+                                let mut seq = self.seq.borrow_mut();
+                                if let Err(e) = seq.insert_chan_map(from, to) {
+                                    println!("<! {}", e);
+                                }
+                            } else {
+                                println!("<! invalid 'to' channel");
+                            }
+                        } else {
+                            println!("<! invalid 'from' channel");
+                        };
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
                         let mut pool = self.pool.borrow_mut();
                         if suffix == "best" {
@@ -1316,6 +1341,7 @@ impl Prog {
                         println!("  a <count>              : auto-evolve next <count> generations");
                         println!("  bpm <val>              : change BPM");
                         println!("  c                      : continue");
+                        println!("  chan <from> <to>       : map channel <from> to <to>");
                         println!("  e <idx>                : edit clip");
                         println!("  i                      : info");
                         println!("  l <count> <prefix>     : load <count> genomes into population");
