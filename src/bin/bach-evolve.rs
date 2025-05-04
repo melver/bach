@@ -1140,16 +1140,19 @@ impl Prog {
                         } else if parts.len() < 3 {
                             println!("<! requires 2 arguments");
                         } else if let Ok(from) = parts[1].parse() {
-                            if let Ok(to) = parts[2].parse() {
+                            let to_idx = rand::rng().random_range(2..parts.len());
+                            if let Ok(to) = parts[to_idx].parse() {
                                 let mut seq = self.seq.borrow_mut();
                                 if let Err(e) = seq.insert_chan_map(from, to) {
                                     println!("<! {}", e);
+                                } else {
+                                    println!("<- mapping channel {} to {}", from, to);
                                 }
                             } else {
-                                println!("<! invalid 'to' channel");
+                                println!("<! invalid 'to' channel: {}", parts[to_idx]);
                             }
                         } else {
-                            println!("<! invalid 'from' channel");
+                            println!("<! invalid 'from' channel: {}", parts[1]);
                         };
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
                         let mut pool = self.pool.borrow_mut();
@@ -1341,7 +1344,7 @@ impl Prog {
                         println!("  a <count>              : auto-evolve next <count> generations");
                         println!("  bpm <val>              : change BPM");
                         println!("  c                      : continue");
-                        println!("  chan <from> <to>       : map channel <from> to <to>");
+                        println!("  chan <from> <to>...    : map channel <from> to one of <to>...");
                         println!("  e <idx>                : edit clip");
                         println!("  i                      : info");
                         println!("  l <count> <prefix>     : load <count> genomes into population");
