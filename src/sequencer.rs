@@ -50,8 +50,28 @@ pub fn euclidean_sequence(pulses: u32, len: u32, offset: u32) -> Vec<bool> {
         .collect()
 }
 
-/// Synchronizes ticks to desired BPM.
-pub struct TickClock {
+pub trait TickClock {
+    /// Reset all internal state to the initial tick.
+    fn reset(&mut self);
+
+    /// Returns the duration per tick, and drift from the targeted sync point.
+    fn await_tick(&mut self) -> (time::Duration, time::Duration);
+
+    /// Return the current tick.
+    fn tick(&self) -> u64;
+
+    /// Fast-forwards ticks without real time synchronization.
+    fn forward_tick(&mut self, ticks: u64);
+
+    /// Convert a duration into MIDI sequencer ticks based on the clock's configuration.
+    fn get_ticks(&self, duration: &Duration) -> Option<u64>;
+
+    /// Return the current elapsed time in beats and absolute time.
+    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration);
+}
+
+/// Synchronizes ticks to desired BPM using the OS system clock.
+pub struct SystemClock {
     /// Desired BPM.
     pub bpm: u32,
     /// Desired MIDI PPQN.
@@ -62,9 +82,9 @@ pub struct TickClock {
     start_time: time::Instant,
 }
 
-impl Default for TickClock {
+impl Default for SystemClock {
     fn default() -> Self {
-        TickClock {
+        SystemClock {
             bpm: 120,
             ppqn: 48,
             tick: 0,
@@ -73,7 +93,7 @@ impl Default for TickClock {
     }
 }
 
-impl TickClock {
+impl SystemClock {
     /// MIDI BPM is quarter notes per minute; PPQN is pulses per quarter note.
     pub fn new(bpm: u32, ppqn: u32) -> Self {
         assert!(bpm > 0, "BPM cannot be 0");
@@ -87,15 +107,20 @@ impl TickClock {
             "PPQN must be divisible by {}",
             CLOCKS_PER_QN
         );
-        TickClock {
+        SystemClock {
             bpm,
             ppqn,
             ..Default::default()
         }
     }
+}
 
-    /// Returns the duration per tick, and drift from the targeted sync point.
-    pub fn await_tick(&mut self) -> (time::Duration, time::Duration) {
+impl TickClock for SystemClock {
+    fn reset(&mut self) {
+        self.tick = 0
+    }
+
+    fn await_tick(&mut self) -> (time::Duration, time::Duration) {
         let ticks_per_minute = self.bpm * self.ppqn;
         let duration_per_tick = time::Duration::from_secs(60) / ticks_per_minute;
 
@@ -127,18 +152,15 @@ impl TickClock {
         (duration_per_tick, drift)
     }
 
-    /// Fast-forwards ticks without real time synchronization.
-    pub fn forward_tick(&mut self, ticks: u64) {
+    fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    fn forward_tick(&mut self, ticks: u64) {
         self.tick += ticks;
     }
 
-    /// Reset all internal state to the initial tick.
-    pub fn reset(&mut self) {
-        self.tick = 0
-    }
-
-    /// Convert a duration into MIDI sequencer ticks.
-    pub fn into_ticks(&self, duration: &Duration) -> Option<u64> {
+    fn get_ticks(&self, duration: &Duration) -> Option<u64> {
         match *duration {
             Duration::Ticks(ticks) => Some(ticks),
             Duration::Beats(beats, beats_per_bar) => {
@@ -149,8 +171,7 @@ impl TickClock {
         }
     }
 
-    /// Return the current elapsed time in beats and absolute time.
-    pub fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
+    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
         let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
         (
             Duration::Beats(on_beat, beats_per_bar),
@@ -193,14 +214,19 @@ impl MidiSequencer {
     /// Advance to the next tick and return the MIDI message stream to be sent to a compatible MIDI
     /// device.
     #[must_use]
-    pub fn tick(&mut self, tick_clock: &TickClock) -> Vec<u8> {
+    pub fn tick<TC>(&mut self, tick_clock: &TC) -> Vec<u8>
+    where
+        TC: TickClock + ?Sized,
+    {
         // TickClock::await_tick() should be called after we're done with all processing.
-        assert!(tick_clock.tick == self.tick, "unsynchronized TickClock");
+        assert!(tick_clock.tick() == self.tick, "unsynchronized clock");
 
         let mut queue_opt = self.queue.remove(&self.tick);
         self.tick += 1; // advance tick
 
-        let ticks_per_clock = (tick_clock.ppqn / CLOCKS_PER_QN) as u64;
+        let ticks_per_clock = tick_clock
+            .get_ticks(&Duration::Beats(1, 4 * CLOCKS_PER_QN))
+            .unwrap();
         if self.send_clock && (self.tick - 1) % ticks_per_clock == 0 {
             // Clock has highest priority; send it first.
             let mut ret: Vec<u8> = MidiMsg::Clock.into();
@@ -214,11 +240,12 @@ impl MidiSequencer {
     }
 
     /// Advance until `delta` duration has elapsed, and for each tick calls back `send_midi`.
-    pub fn tick_until<F>(&mut self, tick_clock: &mut TickClock, delta: &Duration, send_midi: &mut F)
+    pub fn tick_until<F, TC>(&mut self, tick_clock: &mut TC, delta: &Duration, send_midi: &mut F)
     where
+        TC: TickClock + ?Sized,
         F: FnMut(&[u8]),
     {
-        let until_tick = match tick_clock.into_ticks(delta) {
+        let until_tick = match tick_clock.get_ticks(delta) {
             Some(t) => self.tick + t,
             _ => panic!("not a valid tick delta: {}", delta),
         };
@@ -230,15 +257,12 @@ impl MidiSequencer {
     }
 
     /// Fast-forwards until `delta` duration has elapsed, and for each tick calls back `send_midi`.
-    pub fn forward_until<F>(
-        &mut self,
-        tick_clock: &mut TickClock,
-        delta: &Duration,
-        send_midi: &mut F,
-    ) where
+    pub fn forward_until<F, TC>(&mut self, tick_clock: &mut TC, delta: &Duration, send_midi: &mut F)
+    where
+        TC: TickClock + ?Sized,
         F: FnMut(&[u8]),
     {
-        let until_tick = match tick_clock.into_ticks(delta) {
+        let until_tick = match tick_clock.get_ticks(delta) {
             Some(t) => self.tick + t,
             _ => panic!("not a valid tick delta: {}", delta),
         };
@@ -324,14 +348,17 @@ impl MidiSequencer {
     }
 
     /// Queue a typed note description as MIDI messages.
-    pub fn queue(
+    pub fn queue<TC>(
         &mut self,
-        tick_clock: &TickClock,
+        tick_clock: &TC,
         chan: u8,
         note: &Note,
         velocity: &Velocity,
         duration: &Duration,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        TC: TickClock + ?Sized,
+    {
         let midi_note = Result::from(note)?;
         let velocity = velocity.into();
         let off_velocity = if let Duration::End = duration {
@@ -339,7 +366,7 @@ impl MidiSequencer {
         } else {
             0
         };
-        let ticks = tick_clock.into_ticks(duration);
+        let ticks = tick_clock.get_ticks(duration);
         self.queue_midi(
             chan,
             midi_note,
@@ -353,19 +380,22 @@ impl MidiSequencer {
 
     /// Queue typed notes based on a rhythmic sequence. Each element in `sequence` maps to the
     /// corresponding element in `notes`, where the latter simply repeats if exhausted.
-    pub fn queue_sequence(
+    pub fn queue_sequence<TC>(
         &mut self,
-        tick_clock: &TickClock,
+        tick_clock: &TC,
         chan: u8,
         notes: &[Note],
         velocity: &Velocity,
         unit_duration: &Duration,
         sequence: &[bool],
         skip_allocated: bool,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        TC: TickClock + ?Sized,
+    {
         let velocity = velocity.into();
         let unit_ticks = tick_clock
-            .into_ticks(unit_duration)
+            .get_ticks(unit_duration)
             .expect("requires finite duration");
         assert!(unit_ticks != 0, "ticks cannot be 0");
 
@@ -551,7 +581,7 @@ pub type Clip = Vec<SeqCommand>;
 // === Extension for VM ========================================================
 
 pub struct SeqVmState {
-    pub clock: RefCell<TickClock>,
+    pub clock: RefCell<Box<dyn TickClock>>,
     pub seq: RefCell<MidiSequencer>,
     pub map_note: Box<dyn Fn(i8) -> Note>,
     pub map_duration: Box<dyn Fn(u32) -> Duration>,
@@ -593,7 +623,7 @@ impl InstExtension for SeqInst {
                     };
                     let mut seq = vmstate.seq.borrow_mut();
                     let clock = vmstate.clock.borrow();
-                    seq.queue(&clock, chan, &note, &velocity, &duration)
+                    seq.queue(clock.as_ref(), chan, &note, &velocity, &duration)
                         .map(|_| 1)
                 }
             }
@@ -657,22 +687,22 @@ mod tests {
 
     #[test]
     fn tick_clock() {
-        let mut c = TickClock::default();
-        assert_eq!(c.into_ticks(&Duration::Beats(1, 4)), Some(c.ppqn as u64));
+        let mut c = SystemClock::default();
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 4)), Some(c.ppqn as u64));
         assert_eq!(
-            c.into_ticks(&Duration::Beats(2, 4)),
+            c.get_ticks(&Duration::Beats(2, 4)),
             Some((2 * c.ppqn) as u64)
         );
         assert_eq!(
-            c.into_ticks(&Duration::Beats(1, 8)),
+            c.get_ticks(&Duration::Beats(1, 8)),
             Some((c.ppqn / 2) as u64)
         );
         assert_eq!(
-            c.into_ticks(&Duration::Beats(1, 16)),
+            c.get_ticks(&Duration::Beats(1, 16)),
             Some((c.ppqn / 4) as u64)
         );
-        assert_eq!(c.into_ticks(&Duration::Beats(1, 192)), Some(1));
-        assert_eq!(c.into_ticks(&Duration::Beats(1, 193)), Some(0));
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 192)), Some(1));
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 193)), Some(0));
 
         while c.tick < 10 {
             let (_tpm, drift) = c.await_tick();
@@ -685,7 +715,7 @@ mod tests {
 
     #[test]
     fn one_note() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
@@ -707,7 +737,7 @@ mod tests {
 
     #[test]
     fn one_note_no_clock() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::new(false);
         seq.queue(
             &clock,
@@ -729,7 +759,7 @@ mod tests {
 
     #[test]
     fn one_note_fast_forward() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
@@ -751,7 +781,7 @@ mod tests {
 
     #[test]
     fn multiple_notes() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
@@ -791,7 +821,7 @@ mod tests {
 
     #[test]
     fn queue_sequence() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
         seq.queue_sequence(
             &clock,
@@ -821,7 +851,7 @@ mod tests {
 
     #[test]
     fn already_queueing_note() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
         seq.queue(
             &clock,
@@ -871,7 +901,7 @@ mod tests {
 
     #[test]
     fn duration_start_stop() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
         // Starting and immediately stopping is ok.
@@ -921,7 +951,7 @@ mod tests {
 
     #[test]
     fn stop_restart() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
         seq.queue(
@@ -973,7 +1003,7 @@ mod tests {
 
     #[test]
     fn control_change() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
         seq.queue(
@@ -999,7 +1029,7 @@ mod tests {
 
     #[test]
     fn map_chan() {
-        let mut clock = TickClock::default();
+        let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
         seq.queue(
@@ -1066,7 +1096,7 @@ mod tests {
     #[test]
     fn vm_prog_err() {
         let vmstate = Rc::new(SeqVmState {
-            clock: RefCell::default(),
+            clock: RefCell::new(Box::new(SystemClock::default())),
             seq: RefCell::default(),
             map_note: Box::new(|n| Note::Maj(60, n)),
             map_duration: Box::new(|d| Duration::Beats(d, 4)),
@@ -1089,7 +1119,7 @@ mod tests {
     #[test]
     fn vm_prog_one_note() {
         let vmstate = Rc::new(SeqVmState {
-            clock: RefCell::default(),
+            clock: RefCell::new(Box::new(SystemClock::default())),
             seq: RefCell::default(),
             map_note: Box::new(|n| Note::Maj(60, n)),
             map_duration: Box::new(|d| Duration::Beats(d, 4 * 48)),
@@ -1105,13 +1135,13 @@ mod tests {
         core.eval(None).unwrap();
         let mut seq = vmstate.seq.borrow_mut();
         let mut clock = vmstate.clock.borrow_mut();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x99, 65, 64]);
+        assert_eq!(seq.tick(clock.as_ref()), vec![0xf8, 0x99, 65, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(clock.as_ref()), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        assert_eq!(seq.tick(clock.as_ref()), vec![0xf8]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x89, 65, 0]);
+        assert_eq!(seq.tick(clock.as_ref()), vec![0x89, 65, 0]);
         clock.await_tick();
     }
 }

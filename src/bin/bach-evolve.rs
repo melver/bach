@@ -5,7 +5,7 @@
 //! "debugger for music clips".
 
 use bach::ga::{self, Genome};
-use bach::sequencer::{self, SeqCommand};
+use bach::sequencer::{self, SeqCommand, TickClock};
 use bach::units::*;
 use bach::Result;
 use rand::{rngs::ThreadRng, Rng};
@@ -560,7 +560,7 @@ fn prompt(prompt: &str) -> String {
 
 struct Prog {
     midi_file: RefCell<fs::File>,
-    clock: RefCell<sequencer::TickClock>,
+    clock: RefCell<sequencer::SystemClock>,
     seq: RefCell<sequencer::MidiSequencer>,
     pool: RefCell<ga::GenomePool<ClipGenome>>,
     /// Auto-evaluate until generation.
@@ -587,7 +587,7 @@ impl Prog {
 
         Self {
             midi_file: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
-            clock: RefCell::new(sequencer::TickClock::new(bpm, ppqn)),
+            clock: RefCell::new(sequencer::SystemClock::new(bpm, ppqn)),
             seq: RefCell::new(sequencer::MidiSequencer::new(cfg().send_clock)),
             pool: RefCell::new(ga::GenomePool::new(
                 ClipGenome::default(),
@@ -603,7 +603,7 @@ impl Prog {
         let mut clock = self.clock.borrow_mut();
         let mut seq = self.seq.borrow_mut();
         let mut midi_file = self.midi_file.borrow_mut();
-        seq.tick_until(&mut clock, duration, &mut |b| {
+        seq.tick_until(&mut *clock, duration, &mut |b| {
             midi_file.write_all(b).unwrap();
             midi_file.flush().unwrap();
         });
@@ -663,7 +663,7 @@ impl Prog {
                 }
                 SeqCommand::QueueNote(c, n, v, d) => {
                     let clock = self.clock.borrow();
-                    if let Err(e) = self.seq.borrow_mut().queue(&clock, *c, n, v, d) {
+                    if let Err(e) = self.seq.borrow_mut().queue(&*clock, *c, n, v, d) {
                         println!("<! failed to queue: {}", e); // Just keep playing.
                     }
                 }
@@ -671,7 +671,7 @@ impl Prog {
                     let eucl = sequencer::euclidean_sequence(*p, *l, *o);
                     let clock = self.clock.borrow();
                     if let Err(e) = self.seq.borrow_mut().queue_sequence(
-                        &clock,
+                        &*clock,
                         *c,
                         ns,
                         v,
@@ -746,7 +746,7 @@ impl Prog {
                         // errors when we try to queue notes.
                         let mut clock = self.clock.borrow_mut();
                         let mut seq = self.seq.borrow_mut();
-                        seq.forward_until(&mut clock, delta, &mut |_| ());
+                        seq.forward_until(&mut *clock, delta, &mut |_| ());
                         match delta {
                             Duration::Beats(b, bpb) if *bpb == cfg().beats_per_bar => {
                                 cur_beat += *b
@@ -761,7 +761,7 @@ impl Prog {
                     }
                     SeqCommand::QueueNote(c, n, v, d) => {
                         let mut seq = self.seq.borrow_mut();
-                        if seq.queue(&self.clock.borrow(), *c, n, v, d).is_err() {
+                        if seq.queue(&*self.clock.borrow(), *c, n, v, d).is_err() {
                             fitness -= 1.0;
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
@@ -777,7 +777,7 @@ impl Prog {
                         let clock = self.clock.borrow();
                         let mut seq = self.seq.borrow_mut();
                         if seq
-                            .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
+                            .queue_sequence(&*clock, *c, ns, v, d, &eucl, false)
                             .is_err()
                         {
                             fitness -= 2.0;

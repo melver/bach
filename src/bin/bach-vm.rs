@@ -55,7 +55,7 @@ fn main() {
     }
 
     let vmstate = Rc::new(SeqVmState {
-        clock: RefCell::new(TickClock::new(bpm, ppqn)),
+        clock: RefCell::new(Box::new(SystemClock::new(bpm, ppqn))),
         seq: RefCell::new(MidiSequencer::default()),
         map_note: map_note.expect("must provide .scale directive"),
         map_duration: map_duration.expect("must provide .time_sig directive"),
@@ -91,7 +91,7 @@ fn main() {
         };
         let mut seq = vmstate.seq.borrow_mut();
         let mut clock = vmstate.clock.borrow_mut();
-        seq.tick_until(&mut clock, &tick_delta, &mut |b| {
+        seq.tick_until(clock.as_mut(), &tick_delta, &mut |b| {
             io::stdout().write_all(b).unwrap();
             io::stdout().flush().unwrap();
         });
