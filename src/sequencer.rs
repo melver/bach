@@ -190,6 +190,8 @@ pub struct MidiSequencer {
     pub tick: u64,
     /// Send MIDI clock.
     pub send_clock: bool,
+    /// MIDI version.
+    midi_ver: u32,
     /// Map of tick to queued raw messages.
     queue: HashMap<u64, Vec<u8>>,
     /// Map of allocated notes (channel, note) and their expiration tick. This is to avoid
@@ -201,10 +203,11 @@ pub struct MidiSequencer {
 }
 
 impl MidiSequencer {
-    pub fn new(send_clock: bool) -> Self {
+    pub fn new(send_clock: bool, midi_ver: u32) -> Self {
         Self {
             tick: 0,
             send_clock,
+            midi_ver,
             queue: HashMap::new(),
             allocated: HashMap::new(),
             chan_map: HashMap::new(),
@@ -229,7 +232,7 @@ impl MidiSequencer {
             .unwrap();
         if self.send_clock && (self.tick - 1) % ticks_per_clock == 0 {
             // Clock has highest priority; send it first.
-            let mut ret: Vec<u8> = MidiMsg::Clock.into();
+            let mut ret: Vec<u8> = MidiMsg::Clock.to_midi(self.midi_ver);
             if let Some(ref mut queue) = queue_opt {
                 ret.append(queue);
             }
@@ -330,7 +333,7 @@ impl MidiSequencer {
             self.queue
                 .entry(begin_tick)
                 .or_default()
-                .append(&mut on_msg.into());
+                .append(&mut on_msg.to_midi(self.midi_ver));
         }
 
         if end_tick != u64::MAX {
@@ -339,7 +342,7 @@ impl MidiSequencer {
             self.queue
                 .entry(end_tick)
                 .or_default()
-                .append(&mut off_msg.into());
+                .append(&mut off_msg.to_midi(self.midi_ver));
         }
 
         self.allocated.insert((chan, note), end_tick);
@@ -439,7 +442,7 @@ impl MidiSequencer {
         self.queue
             .entry(self.tick)
             .or_default()
-            .append(&mut msg.into());
+            .append(&mut msg.to_midi(self.midi_ver));
 
         Ok(())
     }
@@ -454,7 +457,7 @@ impl MidiSequencer {
         for ((chan, note), end_tick) in self.allocated.drain() {
             if self.tick <= end_tick {
                 let off_msg = MidiMsg::NoteOff(chan, note, 0);
-                stop_msgs.append(&mut off_msg.into());
+                stop_msgs.append(&mut off_msg.to_midi(self.midi_ver));
             }
         }
 
@@ -484,7 +487,7 @@ impl MidiSequencer {
 
 impl Default for MidiSequencer {
     fn default() -> Self {
-        Self::new(true)
+        Self::new(true, 10)
     }
 }
 
@@ -738,7 +741,7 @@ mod tests {
     #[test]
     fn one_note_no_clock() {
         let mut clock = SystemClock::default();
-        let mut seq = MidiSequencer::new(false);
+        let mut seq = MidiSequencer::new(false, 10);
         seq.queue(
             &clock,
             1,

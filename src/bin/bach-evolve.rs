@@ -27,6 +27,7 @@ use std::thread;
 #[derive(Debug)]
 struct Config {
     send_clock: bool,
+    midi_ver: u32,
     cc: Vec<(u8, u8, (u8, u8))>,
     channels: (u8, u8),
     beats_per_bar: u32,
@@ -53,6 +54,7 @@ impl Config {
     fn new() -> Self {
         Self {
             send_clock: true,
+            midi_ver: 10,
             cc: vec![],
             channels: (0, 2),
             beats_per_bar: 8,
@@ -89,6 +91,8 @@ impl Config {
                 continue;
             } else if let Some(suffix) = line.strip_prefix("send_clock ") {
                 self.send_clock = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("midi_ver ") {
+                self.midi_ver = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("cc ") {
                 let parts: Vec<&str> = suffix.split(' ').collect();
                 for part in &parts {
@@ -588,7 +592,10 @@ impl Prog {
         Self {
             midi_file: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
             clock: RefCell::new(sequencer::SystemClock::new(bpm, ppqn)),
-            seq: RefCell::new(sequencer::MidiSequencer::new(cfg().send_clock)),
+            seq: RefCell::new(sequencer::MidiSequencer::new(
+                cfg().send_clock,
+                cfg().midi_ver,
+            )),
             pool: RefCell::new(ga::GenomePool::new(
                 ClipGenome::default(),
                 cfg().population_size,
