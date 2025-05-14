@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_string_conversions() {
+    fn basic_parsing() {
         assert!("*".parse() == Ok(Duration::Begin));
         assert!("-".parse() == Ok(Duration::End));
         assert!("3t".parse() == Ok(Duration::Ticks(3)));

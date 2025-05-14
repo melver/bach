@@ -5,7 +5,7 @@
 //! "debugger for music clips".
 
 use bach::ga::{self, Genome};
-use bach::sequencer::{self, SeqCommand, TickClock};
+use bach::sequencer::{self, ClipInst, SeqCall, TickClock};
 use bach::units::*;
 use bach::Result;
 use rand::{rngs::ThreadRng, Rng};
@@ -228,7 +228,7 @@ impl From<&ClipGenome> for sequencer::Clip {
 impl Default for ClipGenome {
     fn default() -> Self {
         Self {
-            clip: vec![SeqCommand::Jmp(0); cfg().clip_init_len],
+            clip: vec![ClipInst::Jmp(0); cfg().clip_init_len],
             init: false,
             fitness: None,
             comment: String::new(),
@@ -244,8 +244,8 @@ impl ClipGenome {
             writeln!(file, "# fitness: {}", fitness)?;
         }
         writeln!(file, ".skip_allocated {}", cfg().skip_allocated)?; // for bach-play
-        for cmd in &self.clip {
-            writeln!(file, "{}", cmd)?;
+        for inst in &self.clip {
+            writeln!(file, "{}", inst)?;
         }
         println!("<- wrote {}", path.display());
         Ok(())
@@ -269,7 +269,7 @@ impl ClipGenome {
                 continue;
             } else {
                 match line.parse() {
-                    Ok(cmd) => clip.push(cmd),
+                    Ok(inst) => clip.push(inst),
                     Err(e) => return Err(format!("line {}: {}", line_num, e)),
                 }
             }
@@ -380,27 +380,27 @@ impl ClipGenome {
         }
     }
 
-    fn gen_command(&self, rng: &mut ThreadRng) -> SeqCommand {
-        // The extension range (multiplied by weight) are additional commands that are only
+    fn gen_inst(&self, rng: &mut ThreadRng) -> ClipInst {
+        // The extension range (multiplied by weight) are additional instructions that are only
         // optionally generated.
         let extension_weight = cmp::max(1, 8 / (cfg().cc.len() + 1));
         let extension_range = cfg().cc.len() * extension_weight;
 
         match rng.random_range(0..(100 + extension_range)) {
-            0..=7 => SeqCommand::Jmp(rng.random_range(-20..=0)),
+            0..=7 => ClipInst::Jmp(rng.random_range(-20..=0)),
             8..=19 => {
                 let chan = self.gen_channel(rng);
-                SeqCommand::QueueNote(
+                ClipInst::Call(SeqCall::QueueNote(
                     chan,
                     self.gen_note(chan, rng),
                     self.gen_velocity(rng),
                     self.gen_duration(rng, true),
-                )
+                ))
             }
             20..=49 => {
                 let chan = self.gen_channel(rng);
                 let eucl_params = self.gen_euclidean_params(rng);
-                SeqCommand::QueueSequence(
+                ClipInst::Call(SeqCall::QueueSequence(
                     chan,
                     self.gen_note_list(chan, rng),
                     self.gen_velocity(rng),
@@ -408,14 +408,18 @@ impl ClipGenome {
                     eucl_params.0,
                     eucl_params.1,
                     eucl_params.2,
-                )
+                ))
             }
-            50..=99 => SeqCommand::Tick(self.gen_duration(rng, true)),
+            50..=99 => ClipInst::Tick(self.gen_duration(rng, true)),
             rnd => {
                 let extension_idx: usize = rnd.wrapping_sub(100) / extension_weight;
                 if extension_idx < cfg().cc.len() {
                     let (chan, control, range) = cfg().cc[extension_idx];
-                    SeqCommand::QueueControl(chan, control, rng.random_range(range.0..=range.1))
+                    ClipInst::Call(SeqCall::QueueControl(
+                        chan,
+                        control,
+                        rng.random_range(range.0..=range.1),
+                    ))
                 } else {
                     unreachable!();
                 }
@@ -449,32 +453,32 @@ impl Genome for ClipGenome {
             }
 
             self.clip[idx] = match &self.clip[idx] {
-                SeqCommand::Jmp(_) | SeqCommand::Tick(_) => self.gen_command(&mut rng),
-                SeqCommand::QueueNote(chan, note, velocity, duration) => {
+                ClipInst::Jmp(_) | ClipInst::Tick(_) => self.gen_inst(&mut rng),
+                ClipInst::Call(SeqCall::QueueNote(chan, note, velocity, duration)) => {
                     match rng.random_range(0..=3) {
-                        0 => SeqCommand::QueueNote(
+                        0 => ClipInst::Call(SeqCall::QueueNote(
                             *chan,
                             self.gen_note(*chan, &mut rng),
                             velocity.clone(),
                             duration.clone(),
-                        ),
-                        1 => SeqCommand::QueueNote(
+                        )),
+                        1 => ClipInst::Call(SeqCall::QueueNote(
                             *chan,
                             note.clone(),
                             self.gen_velocity(&mut rng),
                             duration.clone(),
-                        ),
-                        2 => SeqCommand::QueueNote(
+                        )),
+                        2 => ClipInst::Call(SeqCall::QueueNote(
                             *chan,
                             note.clone(),
                             velocity.clone(),
                             self.gen_duration(&mut rng, true),
-                        ),
-                        3 => self.gen_command(&mut rng),
+                        )),
+                        3 => self.gen_inst(&mut rng),
                         _ => unreachable!(),
                     }
                 }
-                SeqCommand::QueueSequence(
+                ClipInst::Call(SeqCall::QueueSequence(
                     chan,
                     ref notes,
                     velocity,
@@ -482,8 +486,8 @@ impl Genome for ClipGenome {
                     pulses,
                     len,
                     offset,
-                ) => match rng.random_range(0..=4) {
-                    0 => SeqCommand::QueueSequence(
+                )) => match rng.random_range(0..=4) {
+                    0 => ClipInst::Call(SeqCall::QueueSequence(
                         *chan,
                         self.gen_note_list(*chan, &mut rng),
                         velocity.clone(),
@@ -491,8 +495,8 @@ impl Genome for ClipGenome {
                         *pulses,
                         *len,
                         *offset,
-                    ),
-                    1 => SeqCommand::QueueSequence(
+                    )),
+                    1 => ClipInst::Call(SeqCall::QueueSequence(
                         *chan,
                         notes.clone(),
                         self.gen_velocity(&mut rng),
@@ -500,8 +504,8 @@ impl Genome for ClipGenome {
                         *pulses,
                         *len,
                         *offset,
-                    ),
-                    2 => SeqCommand::QueueSequence(
+                    )),
+                    2 => ClipInst::Call(SeqCall::QueueSequence(
                         *chan,
                         notes.clone(),
                         velocity.clone(),
@@ -509,10 +513,10 @@ impl Genome for ClipGenome {
                         *pulses,
                         *len,
                         *offset,
-                    ),
+                    )),
                     3 => {
                         let eucl_params = self.gen_euclidean_params(&mut rng);
-                        SeqCommand::QueueSequence(
+                        ClipInst::Call(SeqCall::QueueSequence(
                             *chan,
                             notes.clone(),
                             velocity.clone(),
@@ -520,12 +524,12 @@ impl Genome for ClipGenome {
                             eucl_params.0,
                             eucl_params.1,
                             eucl_params.2,
-                        )
+                        ))
                     }
-                    4 => self.gen_command(&mut rng),
+                    4 => self.gen_inst(&mut rng),
                     _ => unreachable!(),
                 },
-                SeqCommand::QueueControl(_, _, _) => self.gen_command(&mut rng),
+                ClipInst::Call(SeqCall::QueueControl(_, _, _)) => self.gen_inst(&mut rng),
             };
 
             to_mutate -= 1;
@@ -628,83 +632,64 @@ impl Prog {
     fn play(&self, clip: &ClipGenome) {
         println!("<- begin clip; {}", clip.comment);
         let prefix_clip = self.prefix_clip.borrow();
-        let cmd_start: isize = -(prefix_clip.clip.len() as isize);
-        let mut skip_cmd = HashSet::new();
-        let mut cmd_idx: isize = cmd_start;
+        let inst_start: isize = -(prefix_clip.clip.len() as isize);
+        let mut skip_inst = HashSet::new();
+        let mut inst_idx: isize = inst_start;
         let mut silence = true;
-        while cmd_idx < clip.clip.len() as isize {
+        while inst_idx < clip.clip.len() as isize {
             if !is_running() {
                 return;
             }
 
-            // Pick command from prefix if negative index.
-            let seq_cmd = if cmd_idx < 0 {
-                &prefix_clip.clip[(cmd_idx - cmd_start) as usize]
+            // Pick instruction from prefix if negative index.
+            let seq_inst = if inst_idx < 0 {
+                &prefix_clip.clip[(inst_idx - inst_start) as usize]
             } else {
-                &clip.clip[cmd_idx as usize]
+                &clip.clip[inst_idx as usize]
             };
 
-            if !skip_cmd.contains(&cmd_idx) {
+            if !skip_inst.contains(&inst_idx) {
                 let (elapsed_qns, elapsed_real) = self.clock.borrow().elapsed(cfg().beats_per_bar);
                 println!(
                     "[{:.2}s | {}] <{}> {}",
                     elapsed_real.as_secs_f32(),
                     elapsed_qns,
-                    cmd_idx,
-                    seq_cmd
+                    inst_idx,
+                    seq_inst
                 );
             }
 
-            match seq_cmd {
-                SeqCommand::Tick(delta) => {
+            match seq_inst {
+                ClipInst::Tick(delta) => {
                     if silence {
                         println!("<- skipping silence");
                     } else {
                         self.tick_until(delta);
                     }
                 }
-                SeqCommand::Jmp(offset) => {
-                    if skip_cmd.insert(cmd_idx) {
-                        cmd_idx = cmp::max(cmd_start, cmd_idx + *offset as isize);
+                ClipInst::Jmp(offset) => {
+                    if skip_inst.insert(inst_idx) {
+                        inst_idx = cmp::max(inst_start, inst_idx + *offset as isize);
                     }
                 }
-                SeqCommand::QueueNote(c, n, v, d) => {
+                ClipInst::Call(seq_call) => {
                     let clock = self.clock.borrow();
-                    if let Err(e) = self.seq.borrow_mut().queue(&*clock, *c, n, v, d) {
+                    let mut seq = self.seq.borrow_mut();
+                    if let Err(e) = seq.apply(&*clock, seq_call, cfg().skip_allocated) {
                         println!("<! failed to queue: {}", e); // Just keep playing.
-                    }
-                }
-                SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
-                    let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                    let clock = self.clock.borrow();
-                    if let Err(e) = self.seq.borrow_mut().queue_sequence(
-                        &*clock,
-                        *c,
-                        ns,
-                        v,
-                        d,
-                        &eucl,
-                        cfg().skip_allocated,
-                    ) {
-                        println!("<! failed to queue: {}", e);
-                    }
-                }
-                SeqCommand::QueueControl(c, cc, v) => {
-                    if let Err(e) = self.seq.borrow_mut().queue_control(*c, *cc, *v) {
-                        println!("<! failed to queue: {}", e);
                     }
                 }
             }
 
             // Skip initial silence. A jump does count as a non-silence, and can be used to
             // deliberately introduce silence at the beginning.
-            silence = if let SeqCommand::Tick(_) = seq_cmd {
+            silence = if let ClipInst::Tick(_) = seq_inst {
                 silence
             } else {
                 false
             };
 
-            cmd_idx += 1;
+            inst_idx += 1;
         }
         // Allow it to complete some of the sequences.
         println!("<- end clip");
@@ -744,11 +729,11 @@ impl Prog {
                 }
                 sheet[idx_].push(note);
             };
-            let mut skip_cmd = HashSet::new();
-            let mut cmd_idx: isize = 0;
-            while cmd_idx < clip.clip.len() as isize {
-                match &clip.clip[cmd_idx as usize] {
-                    SeqCommand::Tick(delta) => {
+            let mut skip_inst = HashSet::new();
+            let mut inst_idx: isize = 0;
+            while inst_idx < clip.clip.len() as isize {
+                match &clip.clip[inst_idx as usize] {
+                    ClipInst::Tick(delta) => {
                         // We still have to forward the sequencer to accurately detect if there are
                         // errors when we try to queue notes.
                         let mut clock = self.clock.borrow_mut();
@@ -761,14 +746,14 @@ impl Prog {
                             _ => panic!("unexpected delta: {}", delta),
                         }
                     }
-                    SeqCommand::Jmp(offset) => {
-                        if skip_cmd.insert(cmd_idx) {
-                            cmd_idx = cmp::max(0, cmd_idx + *offset as isize);
+                    ClipInst::Jmp(offset) => {
+                        if skip_inst.insert(inst_idx) {
+                            inst_idx = cmp::max(0, inst_idx + *offset as isize);
                         }
                     }
-                    SeqCommand::QueueNote(c, n, v, d) => {
+                    ClipInst::Call(SeqCall::QueueNote(c, n, v, d)) => {
                         let mut seq = self.seq.borrow_mut();
-                        if seq.queue(&*self.clock.borrow(), *c, n, v, d).is_err() {
+                        if seq.queue_note(&*self.clock.borrow(), *c, n, v, d).is_err() {
                             fitness -= 1.0;
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
@@ -779,7 +764,7 @@ impl Prog {
                             panic!("unexpected duration: {}", d);
                         }
                     }
-                    SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
+                    ClipInst::Call(SeqCall::QueueSequence(c, ns, v, d, p, l, o)) => {
                         let eucl = sequencer::euclidean_sequence(*p, *l, *o);
                         let clock = self.clock.borrow();
                         let mut seq = self.seq.borrow_mut();
@@ -805,10 +790,10 @@ impl Prog {
                             panic!("{}", d);
                         }
                     }
-                    SeqCommand::QueueControl(_, _, _) => {}
+                    ClipInst::Call(SeqCall::QueueControl(_, _, _)) => {}
                 }
 
-                cmd_idx += 1;
+                inst_idx += 1;
             }
             // Reset single instance of sequencer and clock.
             let _ = self.seq.borrow_mut().stop();
@@ -1035,7 +1020,7 @@ impl Prog {
                     } else if let Some(suffix) = cmd.strip_prefix("e ") {
                         let parts: Vec<&str> = suffix.split('=').map(|s| s.trim()).collect();
                         if parts.len() < 2 {
-                            println!("<! missing arguments: must provide command");
+                            println!("<! missing arguments: must provide instruction");
                         } else {
                             match parts[0].parse::<usize>() {
                                 Ok(idx) => match parts[1].parse() {
@@ -1050,7 +1035,7 @@ impl Prog {
                                             );
                                         }
                                     }
-                                    Err(e) => println!("<! invalid command: {}", e),
+                                    Err(e) => println!("<! invalid edit: {}", e),
                                 },
                                 Err(e) => println!("<! invalid index: {}", e),
                             }
@@ -1094,17 +1079,17 @@ impl Prog {
                             println!("<! unknown command: {}", cmd);
                         }
                         println!("clip help:");
-                        println!("  a               : auto-score fitness value");
-                        println!("  b               : back");
-                        println!("  c <comment>     : comment");
-                        println!("  d               : dump");
-                        println!("  e <idx> = <cmd> : edit command at index");
-                        println!("  f/F [+=] <val>  : assign fitness value / ..back");
-                        println!("  i               : info");
-                        println!("  l <file>        : load from file");
-                        println!("  p/P             : play / loop");
-                        println!("  q               : quit");
-                        println!("  w <file>        : write");
+                        println!("  a                : auto-score fitness value");
+                        println!("  b                : back");
+                        println!("  c <comment>      : comment");
+                        println!("  d                : dump");
+                        println!("  e <idx> = <inst> : edit instruction at index");
+                        println!("  f/F [+=] <val>   : assign fitness value / ..back");
+                        println!("  i                : info");
+                        println!("  l <file>         : load from file");
+                        println!("  p/P              : play / loop");
+                        println!("  q                : quit");
+                        println!("  w <file>         : write");
                     }
                 }
                 None => {

@@ -69,7 +69,7 @@ fn main() {
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
-        if let Some(seqinst) = SeqInst::from(line.as_str(), vmstate.clone()) {
+        if let Some(seqinst) = SeqVmInst::from(line.as_str(), vmstate.clone()) {
             prog.push(seqinst.into());
         } else {
             match line.as_str().parse() {

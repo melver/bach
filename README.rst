@@ -30,6 +30,7 @@ Main Mode::
   a <count>              : auto-evolve next <count> generations
   bpm <val>              : change BPM
   c                      : continue
+  chan <from> <to>...    : map channel <from> to one of <to>...
   e <idx>                : edit clip
   i                      : info
   l <count> <prefix>     : load <count> genomes into population
@@ -41,17 +42,17 @@ Main Mode::
 
 Clip Editor Mode::
 
-  a               : auto-score fitness value
-  b               : back
-  c <comment>     : comment
-  d               : dump
-  e <idx> = <cmd> : edit command at index
-  f/F [+=] <val>  : assign fitness value / ..back
-  i               : info
-  l <file>        : load from file
-  p/P             : play / loop
-  q               : quit
-  w <file>        : write
+  a                : auto-score fitness value
+  b                : back
+  c <comment>      : comment
+  d                : dump
+  e <idx> = <inst> : edit instruction at index
+  f/F [+=] <val>   : assign fitness value / ..back
+  i                : info
+  l <file>         : load from file
+  p/P              : play / loop
+  q                : quit
+  w <file>         : write
 
 Example Usage
 -------------

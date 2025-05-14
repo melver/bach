@@ -50,6 +50,116 @@ pub fn euclidean_sequence(pulses: u32, len: u32, offset: u32) -> Vec<bool> {
         .collect()
 }
 
+// === Clips ===================================================================
+
+/// MIDI sequencer interface.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SeqCall {
+    QueueNote(u8, Note, Velocity, Duration),
+    QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
+    QueueControl(u8, u8, u8),
+}
+
+/// ClipInst is a single instruction of a Clip. It implements convenient conversions to and from
+/// a simple DSL which may be used to store instructions for a clip interpreter.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipInst {
+    Tick(Duration),
+    Jmp(i32),
+    Call(SeqCall),
+}
+
+impl std::str::FromStr for ClipInst {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self> {
+        if let Some(suffix) = s.strip_prefix("+ ") {
+            Ok(ClipInst::Tick(suffix.parse()?))
+        } else if let Some(suffix) = s.strip_prefix("j ") {
+            Ok(ClipInst::Jmp(suffix.parse().map_err(|e| format!("{}", e))?))
+        } else if s == "nop" {
+            // nop is an alias for "j 0"
+            Ok(ClipInst::Jmp(0))
+        } else if let Some(suffix) = s.strip_prefix("n ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            if parts.len() < 4 {
+                return Err("'n' requires 4 arguments".into());
+            }
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let note: Note = parts[1].parse()?;
+            let velocity: Velocity = parts[2].parse()?;
+            let duration: Duration = parts[3].parse()?;
+            Ok(ClipInst::Call(SeqCall::QueueNote(
+                chan, note, velocity, duration,
+            )))
+        } else if let Some(suffix) = s.strip_prefix("s ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            if parts.len() < 7 {
+                return Err("'s' requires 7 arguments".into());
+            }
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let mut notes = vec![];
+            for note in parts[1].split(',') {
+                notes.push(note.parse()?);
+            }
+            let velocity: Velocity = parts[2].parse()?;
+            let duration: Duration = parts[3].parse()?;
+            let pulses = parts[4].parse().map_err(|e| format!("{}", e))?;
+            let length = parts[5].parse().map_err(|e| format!("{}", e))?;
+            let offset = parts[6].parse().map_err(|e| format!("{}", e))?;
+            Ok(ClipInst::Call(SeqCall::QueueSequence(
+                chan, notes, velocity, duration, pulses, length, offset,
+            )))
+        } else if let Some(suffix) = s.strip_prefix("cc ") {
+            let parts: Vec<&str> = suffix.split(' ').collect();
+            if parts.len() < 3 {
+                return Err("'cc' requires 3 arguments".into());
+            }
+            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
+            let control: u8 = parts[1].parse().map_err(|e| format!("{}", e))?;
+            let value: u8 = parts[2].parse().map_err(|e| format!("{}", e))?;
+            Ok(ClipInst::Call(SeqCall::QueueControl(chan, control, value)))
+        } else {
+            Err(format!("unknown instruction: {}", s))
+        }
+    }
+}
+
+impl Display for ClipInst {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClipInst::Tick(duration) => {
+                write!(f, "+ {}", duration)
+            }
+            ClipInst::Jmp(offset) => write!(f, "j {}", offset),
+            ClipInst::Call(seq) => match seq {
+                SeqCall::QueueNote(chan, note, velocity, duration) => {
+                    write!(f, "n {} {} {} {}", chan, note, velocity, duration)
+                }
+                SeqCall::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
+                    let notes_as_str: Vec<String> =
+                        notes.iter().map(|n| format!("{}", n)).collect();
+                    write!(
+                        f,
+                        "s {} {} {} {} {} {} {}",
+                        chan,
+                        notes_as_str.join(","),
+                        velocity,
+                        duration,
+                        pulses,
+                        len,
+                        offset
+                    )
+                }
+                SeqCall::QueueControl(chan, cc, val) => write!(f, "cc {} {} {}", chan, cc, val),
+            },
+        }
+    }
+}
+
+pub type Clip = Vec<ClipInst>;
+
+// === Sequencer ===============================================================
+
 pub trait TickClock {
     /// Reset all internal state to the initial tick.
     fn reset(&mut self);
@@ -350,8 +460,23 @@ impl MidiSequencer {
         Ok(())
     }
 
+    /// Apply a call instruction.
+    pub fn apply<TC>(&mut self, tick_clock: &TC, call: &SeqCall, skip_allocated: bool) -> Result<()>
+    where
+        TC: TickClock + ?Sized,
+    {
+        match call {
+            SeqCall::QueueNote(c, n, v, d) => self.queue_note(tick_clock, *c, n, v, d),
+            SeqCall::QueueSequence(c, ns, v, d, p, l, o) => {
+                let es = euclidean_sequence(*p, *l, *o);
+                self.queue_sequence(tick_clock, *c, ns, v, d, &es, skip_allocated)
+            }
+            SeqCall::QueueControl(c, cc, v) => self.queue_control(*c, *cc, *v),
+        }
+    }
+
     /// Queue a typed note description as MIDI messages.
-    pub fn queue<TC>(
+    pub fn queue_note<TC>(
         &mut self,
         tick_clock: &TC,
         chan: u8,
@@ -480,6 +605,7 @@ impl MidiSequencer {
         Ok(())
     }
 
+    #[must_use]
     pub fn chan_map(&self) -> &HashMap<u8, u8> {
         &self.chan_map
     }
@@ -491,96 +617,6 @@ impl Default for MidiSequencer {
     }
 }
 
-// === Clips ===================================================================
-
-/// SeqCommand is a single instruction of a Clip. It implements convenient conversions to and from
-/// a simple DSL which may be used to store instructions for the MidiSequencer.
-#[derive(Clone, Debug)]
-pub enum SeqCommand {
-    Tick(Duration),
-    Jmp(i32),
-    QueueNote(u8, Note, Velocity, Duration),
-    QueueSequence(u8, Vec<Note>, Velocity, Duration, u32, u32, u32),
-    QueueControl(u8, u8, u8),
-}
-
-impl std::str::FromStr for SeqCommand {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self> {
-        if let Some(suffix) = s.strip_prefix("+ ") {
-            Ok(SeqCommand::Tick(suffix.parse()?))
-        } else if let Some(suffix) = s.strip_prefix("j ") {
-            Ok(SeqCommand::Jmp(
-                suffix.parse().map_err(|e| format!("{}", e))?,
-            ))
-        } else if s == "nop" {
-            // nop is an alias for "j 0"
-            Ok(SeqCommand::Jmp(0))
-        } else if let Some(suffix) = s.strip_prefix("n ") {
-            let parts: Vec<&str> = suffix.split(' ').collect();
-            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
-            let note: Note = parts[1].parse()?;
-            let velocity: Velocity = parts[2].parse()?;
-            let duration: Duration = parts[3].parse()?;
-            Ok(SeqCommand::QueueNote(chan, note, velocity, duration))
-        } else if let Some(suffix) = s.strip_prefix("s ") {
-            let parts: Vec<&str> = suffix.split(' ').collect();
-            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
-            let mut notes = vec![];
-            for note in parts[1].split(',') {
-                notes.push(note.parse()?);
-            }
-            let velocity: Velocity = parts[2].parse()?;
-            let duration: Duration = parts[3].parse()?;
-            let pulses = parts[4].parse().map_err(|e| format!("{}", e))?;
-            let length = parts[5].parse().map_err(|e| format!("{}", e))?;
-            let offset = parts[6].parse().map_err(|e| format!("{}", e))?;
-            Ok(SeqCommand::QueueSequence(
-                chan, notes, velocity, duration, pulses, length, offset,
-            ))
-        } else if let Some(suffix) = s.strip_prefix("cc ") {
-            let parts: Vec<&str> = suffix.split(' ').collect();
-            let chan: u8 = parts[0].parse().map_err(|e| format!("{}", e))?;
-            let control: u8 = parts[1].parse().map_err(|e| format!("{}", e))?;
-            let value: u8 = parts[2].parse().map_err(|e| format!("{}", e))?;
-            Ok(SeqCommand::QueueControl(chan, control, value))
-        } else {
-            Err(format!("unknown command: {}", s))
-        }
-    }
-}
-
-impl Display for SeqCommand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SeqCommand::Tick(duration) => {
-                write!(f, "+ {}", duration)
-            }
-            SeqCommand::Jmp(offset) => write!(f, "j {}", offset),
-            SeqCommand::QueueNote(chan, note, velocity, duration) => {
-                write!(f, "n {} {} {} {}", chan, note, velocity, duration)
-            }
-            SeqCommand::QueueSequence(chan, notes, velocity, duration, pulses, len, offset) => {
-                let notes_as_str: Vec<String> = notes.iter().map(|n| format!("{}", n)).collect();
-                write!(
-                    f,
-                    "s {} {} {} {} {} {} {}",
-                    chan,
-                    notes_as_str.join(","),
-                    velocity,
-                    duration,
-                    pulses,
-                    len,
-                    offset
-                )
-            }
-            SeqCommand::QueueControl(chan, cc, val) => write!(f, "cc {} {} {}", chan, cc, val),
-        }
-    }
-}
-
-pub type Clip = Vec<SeqCommand>;
-
 // === Extension for VM ========================================================
 
 pub struct SeqVmState {
@@ -590,14 +626,14 @@ pub struct SeqVmState {
     pub map_duration: Box<dyn Fn(u32) -> Duration>,
 }
 
-pub enum SeqInst {
+pub enum SeqVmInst {
     QueueNote(Rc<SeqVmState>),
 }
 
-impl InstExtension for SeqInst {
+impl InstExtension for SeqVmInst {
     fn eval(&self, stack: &mut Stack, _mboxes: &Mailboxes) -> Result<isize> {
         match self {
-            SeqInst::QueueNote(vmstate) => {
+            SeqVmInst::QueueNote(vmstate) => {
                 if stack.len() < 4 {
                     Err("QueueNote requires 4 arguments".into())
                 } else {
@@ -626,7 +662,7 @@ impl InstExtension for SeqInst {
                     };
                     let mut seq = vmstate.seq.borrow_mut();
                     let clock = vmstate.clock.borrow();
-                    seq.queue(clock.as_ref(), chan, &note, &velocity, &duration)
+                    seq.queue_note(clock.as_ref(), chan, &note, &velocity, &duration)
                         .map(|_| 1)
                 }
             }
@@ -635,21 +671,21 @@ impl InstExtension for SeqInst {
 
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            SeqInst::QueueNote(_) => f.write_str("SeqInst::QueueNote"),
+            SeqVmInst::QueueNote(_) => f.write_str("SeqVmInst::QueueNote"),
         }
     }
 }
 
-impl From<SeqInst> for Inst {
-    fn from(si: SeqInst) -> Self {
+impl From<SeqVmInst> for Inst {
+    fn from(si: SeqVmInst) -> Self {
         Inst::Ext(Box::new(si))
     }
 }
 
-impl SeqInst {
-    pub fn from(s: &str, vmstate: Rc<SeqVmState>) -> Option<SeqInst> {
+impl SeqVmInst {
+    pub fn from(s: &str, vmstate: Rc<SeqVmState>) -> Option<SeqVmInst> {
         match s {
-            "qnote" => Some(SeqInst::QueueNote(vmstate)),
+            "qnote" => Some(SeqVmInst::QueueNote(vmstate)),
             _ => None,
         }
     }
@@ -660,6 +696,36 @@ impl SeqInst {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clip_parsing() {
+        assert!("+ 1/4".parse() == Ok(ClipInst::Tick(Duration::Beats(1, 4))));
+        assert!("j 10".parse() == Ok(ClipInst::Jmp(10)));
+        assert!("j -1".parse() == Ok(ClipInst::Jmp(-1)));
+        assert!("nop".parse() == Ok(ClipInst::Jmp(0)));
+        assert!(
+            "n 3 @60 ff 1/4".parse()
+                == Ok(ClipInst::Call(SeqCall::QueueNote(
+                    3,
+                    Note::Raw(60),
+                    Velocity::Ff,
+                    Duration::Beats(1, 4)
+                )))
+        );
+        assert!(
+            "s 3 @42,@60 ff 1/4 10 12 2".parse()
+                == Ok(ClipInst::Call(SeqCall::QueueSequence(
+                    3,
+                    vec![Note::Raw(42), Note::Raw(60)],
+                    Velocity::Ff,
+                    Duration::Beats(1, 4),
+                    10,
+                    12,
+                    2
+                )))
+        );
+        assert!("cc 3 4 5".parse() == Ok(ClipInst::Call(SeqCall::QueueControl(3, 4, 5))));
+    }
 
     #[test]
     fn known_euclidean_sequences() {
@@ -720,7 +786,7 @@ mod tests {
     fn one_note() {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 0),
@@ -742,7 +808,7 @@ mod tests {
     fn one_note_no_clock() {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::new(false, 10);
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 0),
@@ -764,7 +830,7 @@ mod tests {
     fn one_note_fast_forward() {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 0),
@@ -786,7 +852,7 @@ mod tests {
     fn multiple_notes() {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 0),
@@ -794,7 +860,7 @@ mod tests {
             &Duration::Beats(1, clock.ppqn),
         )
         .unwrap();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 1),
@@ -804,7 +870,7 @@ mod tests {
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64, 0x91, 62, 64]);
         clock.await_tick();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Maj(60, 2),
@@ -856,7 +922,7 @@ mod tests {
     fn already_queueing_note() {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -867,7 +933,7 @@ mod tests {
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100]);
         clock.await_tick();
         // Different channel is ok.
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Raw(60),
@@ -876,7 +942,7 @@ mod tests {
         )
         .unwrap();
         assert!(seq
-            .queue(
+            .queue_note(
                 &clock,
                 0,
                 &Note::Raw(60),
@@ -887,7 +953,7 @@ mod tests {
         let _ = seq.tick(&clock);
         clock.await_tick();
         // Play on same tick as we are turning it off.
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -898,7 +964,7 @@ mod tests {
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0, 0x90, 60, 101]);
         // Trying to cancel a limited note does not work.
         assert!(seq
-            .queue(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
+            .queue_note(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
             .is_err());
     }
 
@@ -908,7 +974,7 @@ mod tests {
         let mut seq = MidiSequencer::default();
 
         // Starting and immediately stopping is ok.
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -916,13 +982,13 @@ mod tests {
             &Duration::Begin,
         )
         .unwrap();
-        seq.queue(&clock, 0, &Note::Raw(60), &Velocity::Raw(3), &Duration::End)
+        seq.queue_note(&clock, 0, &Note::Raw(60), &Velocity::Raw(3), &Duration::End)
             .unwrap();
 
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100, 0x80, 60, 3]);
         clock.await_tick();
 
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -936,7 +1002,7 @@ mod tests {
 
         // Restarting already playing note doesn't make sense.
         assert!(seq
-            .queue(
+            .queue_note(
                 &clock,
                 0,
                 &Note::Raw(60),
@@ -945,7 +1011,7 @@ mod tests {
             )
             .is_err());
         // We can stop it now.
-        seq.queue(&clock, 0, &Note::Raw(60), &Velocity::None, &Duration::End)
+        seq.queue_note(&clock, 0, &Note::Raw(60), &Velocity::None, &Duration::End)
             .unwrap();
 
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0]);
@@ -957,7 +1023,7 @@ mod tests {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -977,7 +1043,7 @@ mod tests {
         clock.reset();
 
         // Restart
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -985,7 +1051,7 @@ mod tests {
             &Duration::Ticks(10),
         )
         .unwrap();
-        seq.queue(
+        seq.queue_note(
             &clock,
             3,
             &Note::Raw(61),
@@ -1009,7 +1075,7 @@ mod tests {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
-        seq.queue(
+        seq.queue_note(
             &clock,
             0,
             &Note::Raw(60),
@@ -1035,7 +1101,7 @@ mod tests {
         let mut clock = SystemClock::default();
         let mut seq = MidiSequencer::default();
 
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Raw(60),
@@ -1048,7 +1114,7 @@ mod tests {
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 100, 0xb2, 5, 42]);
         clock.await_tick();
 
-        // Does not affect already queued commands, e.g. stop commands are still being sent to the
+        // Does not affect already queued messages, e.g. stop messages are still being sent to the
         // right channel.
         seq.insert_chan_map(1, 5).unwrap();
         seq.insert_chan_map(2, 6).unwrap();
@@ -1056,7 +1122,7 @@ mod tests {
         assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
         clock.await_tick();
 
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Raw(60),
@@ -1064,7 +1130,7 @@ mod tests {
             &Duration::Ticks(1),
         )
         .unwrap();
-        seq.queue(
+        seq.queue_note(
             &clock,
             1,
             &Note::Raw(61),
@@ -1107,7 +1173,7 @@ mod tests {
         let prog = vec![
             Inst::Nop,
             Inst::Push(Op::Int(11)),
-            SeqInst::from("qnote", vmstate).unwrap().into(), // test string conversion
+            SeqVmInst::from("qnote", vmstate).unwrap().into(), // test string conversion
             Inst::Nop,
         ];
         let mut core = Core::new(prog, Mailboxes::default());
@@ -1132,7 +1198,7 @@ mod tests {
             Inst::Push(Op::Int(3)),
             Inst::Push(Op::Int(64)),
             Inst::Push(Op::Int(3)),
-            SeqInst::QueueNote(vmstate.clone()).into(),
+            SeqVmInst::QueueNote(vmstate.clone()).into(),
         ];
         let mut core = Core::new(prog, Mailboxes::default());
         core.eval(None).unwrap();

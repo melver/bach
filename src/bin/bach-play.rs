@@ -9,7 +9,7 @@
 //!  # advance beats
 //!  +<duration>
 
-use bach::sequencer::{self, SeqCommand};
+use bach::sequencer::{self, ClipInst};
 use bach::units::*;
 use std::collections::HashSet;
 use std::fs;
@@ -57,48 +57,37 @@ fn main() {
             skip_allocated = suffix.parse().unwrap();
         } else {
             match line.parse() {
-                Ok(cmd) => clip.push(cmd),
+                Ok(inst) => clip.push(inst),
                 Err(e) => panic!("line {}: {}", line_num, e),
             }
         }
     }
-    clip.push(SeqCommand::Tick(Duration::Beats(3, 1)));
+    clip.push(ClipInst::Tick(Duration::Beats(3, 1)));
 
     let mut clock = sequencer::SystemClock::new(bpm, ppqn);
     let mut seq = sequencer::MidiSequencer::default();
-    let mut skip_cmd = HashSet::new();
-    let mut cmd_idx: isize = 0;
+    let mut skip_inst = HashSet::new();
+    let mut inst_idx: isize = 0;
 
-    while cmd_idx < clip.len() as isize {
-        let seq_cmd = &clip[cmd_idx as usize];
-        if midi_path != "-" && !skip_cmd.contains(&cmd_idx) {
-            println!("<{}> {}", cmd_idx, seq_cmd);
+    while inst_idx < clip.len() as isize {
+        let clip_inst = &clip[inst_idx as usize];
+        if midi_path != "-" && !skip_inst.contains(&inst_idx) {
+            println!("<{}> {}", inst_idx, clip_inst);
         }
-        match seq_cmd {
-            SeqCommand::Tick(delta) => seq.tick_until(&mut clock, delta, &mut midi_write),
-            SeqCommand::Jmp(offset) => {
-                if skip_cmd.insert(cmd_idx) {
-                    cmd_idx = std::cmp::max(0, cmd_idx + *offset as isize);
+        match clip_inst {
+            ClipInst::Tick(delta) => seq.tick_until(&mut clock, delta, &mut midi_write),
+            ClipInst::Jmp(offset) => {
+                if skip_inst.insert(inst_idx) {
+                    inst_idx = std::cmp::max(0, inst_idx + *offset as isize);
                 }
             }
-            SeqCommand::QueueNote(c, n, v, d) => {
-                if let Err(e) = seq.queue(&clock, *c, n, v, d) {
-                    println!("<! failed to queue: {}", e);
-                }
-            }
-            SeqCommand::QueueSequence(c, ns, v, d, p, l, o) => {
-                let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                if let Err(e) = seq.queue_sequence(&clock, *c, ns, v, d, &eucl, skip_allocated) {
-                    println!("<! failed to queue: {}", e);
-                }
-            }
-            SeqCommand::QueueControl(c, cc, v) => {
-                if let Err(e) = seq.queue_control(*c, *cc, *v) {
+            ClipInst::Call(seq_call) => {
+                if let Err(e) = seq.apply(&clock, seq_call, skip_allocated) {
                     println!("<! failed to queue: {}", e);
                 }
             }
         }
-        cmd_idx += 1;
+        inst_idx += 1;
     }
 
     // Stop all still playing notes.
