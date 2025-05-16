@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (C) 2024, Marco Elver <me@marcoelver.com>
 
+pub mod evolve;
 pub mod ga;
 pub mod midi;
 pub mod sequencer;
