@@ -183,21 +183,24 @@ impl Config {
 
 #[derive(Default)]
 pub struct ClipGenome {
+    /// The clip of notes.
     pub clip: Clip,
-    pub init: bool,
+    /// The current fitness value (if set).
     pub fitness: Option<f32>,
+    /// A human-readable comment.
     pub comment: String,
-    pub cfg: Option<&'static Config>,
+    /// If `clip` has been initialized.
+    init: bool,
+    /// The Config instance used for the population.
+    cfg: Option<&'static Config>,
 }
 
 impl From<Clip> for ClipGenome {
     fn from(v: Clip) -> Self {
         Self {
             clip: v,
-            init: true,
-            fitness: None,
-            comment: String::new(),
-            cfg: None,
+            init: true, // is init, because we have a Clip
+            ..Default::default()
         }
     }
 }
@@ -209,6 +212,13 @@ impl From<&ClipGenome> for Clip {
 }
 
 impl ClipGenome {
+    pub fn new(cfg: &'static Config) -> Self {
+        ClipGenome {
+            cfg: Some(cfg),
+            ..Default::default()
+        }
+    }
+
     fn cfg(&self) -> &Config {
         self.cfg.unwrap()
     }

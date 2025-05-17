@@ -83,10 +83,7 @@ impl Prog {
                 cfg().midi_ver,
             )),
             pool: RefCell::new(ga::GenomePool::new(
-                ClipGenome {
-                    cfg: Some(cfg()),
-                    ..Default::default()
-                },
+                ClipGenome::new(cfg()),
                 cfg().population_size,
                 cfg().mutation_probability,
             )),
