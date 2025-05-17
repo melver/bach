@@ -237,7 +237,7 @@ impl<G: Genome + Default> GenomePool<G> {
             }
         }
 
-        GenomeRef(self.get_tag(), best.unwrap())
+        GenomeRef(self.get_tag(), best.unwrap_or(0))
     }
 
     /// Select all genomes in the current population. The order is the same as the underlying
