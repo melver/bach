@@ -17,7 +17,7 @@ test:
 	cargo test
 	cargo run --bin bach-play 8000 48 examples/simple.ch - > /dev/null
 	cargo run --bin bach-vm 8000 48 examples/simple.bch > /dev/null
-	printf 'c\nF 5\nq\n' | cargo run --bin bach-evolve examples/evolve.cfg 8000 48 /dev/null > /dev/null
+	printf 's 1,@examples/simple.ch\nc\nF 5\nq\n' | cargo run --bin bach-evolve examples/evolve.cfg 8000 48 /dev/null > /dev/null
 	printf 'a 3\npfx examples/simple.ch\nc\nq\n' | cargo run --bin bach-evolve - 8000 48 /dev/null > /dev/null
 
 .PHONY: clippy
