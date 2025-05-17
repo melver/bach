@@ -190,6 +190,10 @@ impl Prog {
     /// Evaluate the fitness of a clip without manual feedback based on some generic heuristics of
     /// what sounds good (which is of course rather subjective).
     fn eval(&self, clip: &mut ClipGenome) {
+        // Clock and sequencer for simulation.
+        let mut clock = sequencer::DummyClock::default();
+        let mut seq = sequencer::MidiSequencer::default();
+
         let mut fitness = 0.0;
         // Captures if we encountered error; if value is below 1.0, there were errors and the final
         // fitness score is penalized.
@@ -224,9 +228,7 @@ impl Prog {
                     ClipInst::Tick(delta) => {
                         // We still have to forward the sequencer to accurately detect if there are
                         // errors when we try to queue notes.
-                        let mut clock = self.clock.borrow_mut();
-                        let mut seq = self.seq.borrow_mut();
-                        seq.forward_until(&mut *clock, delta, &mut |_| ());
+                        seq.forward_until(&mut clock, delta, &mut |_| ());
                         match delta {
                             Duration::Beats(b, bpb) if *bpb == cfg().beats_per_bar => {
                                 cur_beat += *b
@@ -240,8 +242,7 @@ impl Prog {
                         }
                     }
                     ClipInst::Call(SeqCall::QueueNote(c, n, v, d)) => {
-                        let mut seq = self.seq.borrow_mut();
-                        if seq.queue_note(&*self.clock.borrow(), *c, n, v, d).is_err() {
+                        if seq.queue_note(&clock, *c, n, v, d).is_err() {
                             fitness -= 1.0;
                         } else if let Duration::Beats(beats, _) = d {
                             for b in 0..*beats {
@@ -254,10 +255,8 @@ impl Prog {
                     }
                     ClipInst::Call(SeqCall::QueueSequence(c, ns, v, d, p, l, o)) => {
                         let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                        let clock = self.clock.borrow();
-                        let mut seq = self.seq.borrow_mut();
                         if seq
-                            .queue_sequence(&*clock, *c, ns, v, d, &eucl, false)
+                            .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
                             .is_err()
                         {
                             fitness -= 2.0;
@@ -283,9 +282,6 @@ impl Prog {
 
                 inst_idx += 1;
             }
-            // Reset single instance of sequencer and clock.
-            let _ = self.seq.borrow_mut().stop();
-            self.clock.borrow_mut().reset();
             // Make it learn to insert "advance" at the end.
             sheet.resize(cur_beat as usize + 1, vec![]);
             assert_eq!(cur_beat as usize + 1, sheet.len());

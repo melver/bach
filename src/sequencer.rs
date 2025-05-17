@@ -160,53 +160,21 @@ pub type Clip = Vec<ClipInst>;
 
 // === Sequencer ===============================================================
 
-pub trait TickClock {
-    /// Reset all internal state to the initial tick.
-    fn reset(&mut self);
-
-    /// Returns the duration per tick, and drift from the targeted sync point.
-    fn await_tick(&mut self) -> (time::Duration, time::Duration);
-
-    /// Return the current tick.
-    fn tick(&self) -> u64;
-
-    /// Fast-forwards ticks without real time synchronization.
-    fn forward_tick(&mut self, ticks: u64);
-
-    /// Convert a duration into MIDI sequencer ticks based on the clock's configuration.
-    fn get_ticks(&self, duration: &Duration) -> Option<u64>;
-
-    /// Return the current elapsed time in beats and absolute time.
-    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration);
-}
-
-/// Synchronizes ticks to desired BPM using the OS system clock.
-pub struct SystemClock {
-    /// Desired BPM.
-    pub bpm: u32,
-    /// Desired MIDI PPQN.
-    ppqn: u32,
+pub struct TickClockBase {
     /// The current tick.
     tick: u64,
-    /// The time we started playing.
-    start_time: time::Instant,
+    /// Desired MIDI PPQN.
+    ppqn: u32,
 }
 
-impl Default for SystemClock {
+impl Default for TickClockBase {
     fn default() -> Self {
-        SystemClock {
-            bpm: 120,
-            ppqn: 48,
-            tick: 0,
-            start_time: time::Instant::now(),
-        }
+        TickClockBase { tick: 0, ppqn: 48 }
     }
 }
 
-impl SystemClock {
-    /// MIDI BPM is quarter notes per minute; PPQN is pulses per quarter note.
-    pub fn new(bpm: u32, ppqn: u32) -> Self {
-        assert!(bpm > 0, "BPM cannot be 0");
+impl TickClockBase {
+    pub fn new(ppqn: u32) -> Self {
         assert!(
             ppqn >= CLOCKS_PER_QN,
             "PPQN must be greater or equal to {}",
@@ -217,28 +185,156 @@ impl SystemClock {
             "PPQN must be divisible by {}",
             CLOCKS_PER_QN
         );
-        SystemClock {
-            bpm,
+        TickClockBase {
             ppqn,
             ..Default::default()
         }
     }
 }
 
-impl TickClock for SystemClock {
+impl TickClockBase {
+    /// Reset all internal state to the initial tick.
     fn reset(&mut self) {
         self.tick = 0
     }
 
+    /// Fast-forwards ticks without real time synchronization.
+    fn forward_tick(&mut self, ticks: u64) {
+        self.tick += ticks;
+    }
+
+    /// Convert a duration into MIDI sequencer ticks based on the clock's configuration.
+    fn get_ticks(&self, duration: &Duration) -> Option<u64> {
+        match *duration {
+            Duration::Ticks(ticks) => Some(ticks),
+            Duration::Beats(beats, beats_per_bar) => {
+                Some(((beats as u64) * 4 * (self.ppqn as u64)) / (beats_per_bar as u64))
+            }
+            Duration::Begin => None,
+            Duration::End => Some(0),
+        }
+    }
+
+    /// Return the current elapsed time in beats.
+    fn elapsed(&self, beats_per_bar: u32) -> Duration {
+        let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
+        Duration::Beats(on_beat, beats_per_bar)
+    }
+}
+
+pub trait TickClock {
+    /// Base state.
+    fn base(&self) -> &TickClockBase;
+
+    /// Mutable base state.
+    fn base_mut(&mut self) -> &mut TickClockBase;
+
+    /// Return the current tick.
+    fn tick(&self) -> u64 {
+        self.base().tick
+    }
+
+    /// Return the configured PPQN.
+    fn ppqn(&self) -> u32 {
+        self.base().ppqn
+    }
+
+    /// Reset all internal state to the initial tick.
+    fn reset(&mut self) {
+        self.base_mut().reset()
+    }
+
+    /// Fast-forwards ticks without real time synchronization.
+    fn forward_tick(&mut self, ticks: u64) {
+        self.base_mut().forward_tick(ticks)
+    }
+
+    /// Convert a duration into MIDI sequencer ticks based on the clock's configuration.
+    fn get_ticks(&self, duration: &Duration) -> Option<u64> {
+        self.base().get_ticks(duration)
+    }
+
+    /// Returns the duration per tick, and drift from the targeted sync point.
+    fn await_tick(&mut self) -> (time::Duration, time::Duration);
+
+    /// Return the current elapsed time in beats and absolute time.
+    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration);
+}
+
+/// Not a real clock.
+#[derive(Default)]
+pub struct DummyClock {
+    base: TickClockBase,
+}
+
+impl TickClock for DummyClock {
+    fn base(&self) -> &TickClockBase {
+        &self.base
+    }
+
+    fn base_mut(&mut self) -> &mut TickClockBase {
+        &mut self.base
+    }
+
     fn await_tick(&mut self) -> (time::Duration, time::Duration) {
-        let ticks_per_minute = self.bpm * self.ppqn;
+        self.forward_tick(1);
+        (time::Duration::ZERO, time::Duration::ZERO)
+    }
+
+    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
+        (self.base().elapsed(beats_per_bar), time::Duration::ZERO)
+    }
+}
+
+/// Synchronizes ticks to desired BPM using the OS system clock.
+pub struct SystemClock {
+    base: TickClockBase,
+    /// Desired BPM.
+    pub bpm: u32,
+    /// The time we started playing.
+    start_time: time::Instant,
+}
+
+impl Default for SystemClock {
+    fn default() -> Self {
+        SystemClock {
+            base: TickClockBase::default(),
+            bpm: 120,
+            start_time: time::Instant::now(),
+        }
+    }
+}
+
+impl SystemClock {
+    /// MIDI BPM is quarter notes per minute; PPQN is pulses per quarter note.
+    pub fn new(bpm: u32, ppqn: u32) -> Self {
+        assert!(bpm > 0, "BPM cannot be 0");
+        SystemClock {
+            base: TickClockBase::new(ppqn),
+            bpm,
+            ..Default::default()
+        }
+    }
+}
+
+impl TickClock for SystemClock {
+    fn base(&self) -> &TickClockBase {
+        &self.base
+    }
+
+    fn base_mut(&mut self) -> &mut TickClockBase {
+        &mut self.base
+    }
+
+    fn await_tick(&mut self) -> (time::Duration, time::Duration) {
+        let ticks_per_minute = self.bpm * self.ppqn();
         let duration_per_tick = time::Duration::from_secs(60) / ticks_per_minute;
 
-        let drift = if self.tick == 0 {
+        let drift = if self.tick() == 0 {
             self.start_time = time::Instant::now();
             time::Duration::ZERO
         } else {
-            let sync_elapsed = duration_per_tick * (self.tick as u32);
+            let sync_elapsed = duration_per_tick * (self.tick() as u32);
             let mut elapsed;
             loop {
                 elapsed = self.start_time.elapsed();
@@ -258,34 +354,14 @@ impl TickClock for SystemClock {
             elapsed - sync_elapsed
         };
 
-        self.tick += 1;
+        self.forward_tick(1);
         (duration_per_tick, drift)
     }
 
-    fn tick(&self) -> u64 {
-        self.tick
-    }
-
-    fn forward_tick(&mut self, ticks: u64) {
-        self.tick += ticks;
-    }
-
-    fn get_ticks(&self, duration: &Duration) -> Option<u64> {
-        match *duration {
-            Duration::Ticks(ticks) => Some(ticks),
-            Duration::Beats(beats, beats_per_bar) => {
-                Some(((beats as u64) * 4 * (self.ppqn as u64)) / (beats_per_bar as u64))
-            }
-            Duration::Begin => None,
-            Duration::End => Some(0),
-        }
-    }
-
     fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
-        let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
         (
-            Duration::Beats(on_beat, beats_per_bar),
-            if self.tick == 0 {
+            self.base().elapsed(beats_per_bar),
+            if self.tick() == 0 {
                 time::Duration::ZERO
             } else {
                 self.start_time.elapsed()
@@ -755,31 +831,73 @@ mod tests {
     }
 
     #[test]
-    fn tick_clock() {
-        let mut c = SystemClock::default();
-        assert_eq!(c.get_ticks(&Duration::Beats(1, 4)), Some(c.ppqn as u64));
+    fn dummy_clock() {
+        let c = DummyClock::default();
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 4)), Some(c.ppqn() as u64));
         assert_eq!(
             c.get_ticks(&Duration::Beats(2, 4)),
-            Some((2 * c.ppqn) as u64)
+            Some((2 * c.ppqn()) as u64)
         );
         assert_eq!(
             c.get_ticks(&Duration::Beats(1, 8)),
-            Some((c.ppqn / 2) as u64)
+            Some((c.ppqn() / 2) as u64)
         );
         assert_eq!(
             c.get_ticks(&Duration::Beats(1, 16)),
-            Some((c.ppqn / 4) as u64)
+            Some((c.ppqn() / 4) as u64)
+        );
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 192)), Some(1));
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 193)), Some(0));
+    }
+
+    #[test]
+    fn tick_clock() {
+        let mut c = SystemClock::default();
+        assert_eq!(c.get_ticks(&Duration::Beats(1, 4)), Some(c.ppqn() as u64));
+        assert_eq!(
+            c.get_ticks(&Duration::Beats(2, 4)),
+            Some((2 * c.ppqn()) as u64)
+        );
+        assert_eq!(
+            c.get_ticks(&Duration::Beats(1, 8)),
+            Some((c.ppqn() / 2) as u64)
+        );
+        assert_eq!(
+            c.get_ticks(&Duration::Beats(1, 16)),
+            Some((c.ppqn() / 4) as u64)
         );
         assert_eq!(c.get_ticks(&Duration::Beats(1, 192)), Some(1));
         assert_eq!(c.get_ticks(&Duration::Beats(1, 193)), Some(0));
 
-        while c.tick < 10 {
+        while c.tick() < 10 {
             let (_tpm, drift) = c.await_tick();
             // Just sanity check - we can't rely on this being too precise as long as we're not
             // running a RT OS. On an unloaded system this is typically below 10, but not
             // garanteed.
             assert!(drift < time::Duration::from_micros(2000));
         }
+    }
+
+    #[test]
+    fn one_note_dummy() {
+        let mut clock = DummyClock::default();
+        let mut seq = MidiSequencer::default();
+        seq.queue_note(
+            &clock,
+            1,
+            &Note::Maj(60, 0),
+            &Velocity::Mf,
+            &Duration::Beats(3, 4 * clock.ppqn()),
+        )
+        .unwrap();
+        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        clock.await_tick();
+        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        clock.await_tick();
     }
 
     #[test]
@@ -791,7 +909,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn),
+            &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
@@ -813,7 +931,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn),
+            &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0x91, 60, 64]);
@@ -835,7 +953,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn),
+            &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
@@ -857,7 +975,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(1, clock.ppqn),
+            &Duration::Beats(1, clock.ppqn()),
         )
         .unwrap();
         seq.queue_note(
@@ -865,7 +983,7 @@ mod tests {
             1,
             &Note::Maj(60, 1),
             &Velocity::Mf,
-            &Duration::Beats(1, clock.ppqn),
+            &Duration::Beats(1, clock.ppqn()),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64, 0x91, 62, 64]);
@@ -875,7 +993,7 @@ mod tests {
             1,
             &Note::Maj(60, 2),
             &Velocity::Mf,
-            &Duration::Beats(1, 4 * clock.ppqn),
+            &Duration::Beats(1, 4 * clock.ppqn()),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0x91, 64, 64]);
@@ -897,7 +1015,7 @@ mod tests {
             1,
             &[Note::Maj(60, 0), Note::Maj(60, 1), Note::Maj(60, 2)],
             &Velocity::Mf,
-            &Duration::Beats(1, 4 * clock.ppqn),
+            &Duration::Beats(1, 4 * clock.ppqn()),
             &[true, false, true, true, false, true],
             false,
         )
