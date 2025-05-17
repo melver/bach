@@ -99,6 +99,7 @@ impl Prog {
         seq.tick_until(&mut *clock, duration, &mut |b| {
             midi_file.write_all(b).unwrap();
             midi_file.flush().unwrap();
+            is_running()
         });
     }
 

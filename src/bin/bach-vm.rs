@@ -94,6 +94,7 @@ fn main() {
         seq.tick_until(clock.as_mut(), &tick_delta, &mut |b| {
             io::stdout().write_all(b).unwrap();
             io::stdout().flush().unwrap();
+            true
         });
     }
 

@@ -432,7 +432,7 @@ impl MidiSequencer {
     pub fn tick_until<F, TC>(&mut self, tick_clock: &mut TC, delta: &Duration, send_midi: &mut F)
     where
         TC: TickClock + ?Sized,
-        F: FnMut(&[u8]),
+        F: FnMut(&[u8]) -> bool,
     {
         let until_tick = match tick_clock.get_ticks(delta) {
             Some(t) => self.tick + t,
@@ -441,7 +441,9 @@ impl MidiSequencer {
         while self.tick != until_tick {
             let midi_bytes = self.tick(tick_clock);
             tick_clock.await_tick();
-            send_midi(&midi_bytes);
+            if !send_midi(&midi_bytes) {
+                break;
+            }
         }
     }
 
