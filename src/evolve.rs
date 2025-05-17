@@ -157,7 +157,7 @@ impl Config {
         self.beats_per_bar.ilog2()
     }
 
-    // Returns a note in the configured scale and the index into the list of note scales.
+    /// Returns a note in the configured scale and the index into the list of note scales.
     pub fn map_note(&self, chan: u8, note: i8) -> (usize, Note) {
         let note_scale = &self.note_scale;
         let idx = chan as usize % note_scale.len();
