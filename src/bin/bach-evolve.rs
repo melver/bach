@@ -23,7 +23,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use std::thread;
 
-static CONFIG: LazyLock<Config> = LazyLock::new(|| Config::new().with_config_file());
+static CONFIG: LazyLock<Config> = LazyLock::new(|| {
+    let path = std::env::args().nth(1).expect("must provide config file");
+    Config::default().with_config_file(&path)
+});
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn cfg() -> &'static Config {

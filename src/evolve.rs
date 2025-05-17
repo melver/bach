@@ -42,8 +42,8 @@ pub struct Config {
     pub population_path: String,
 }
 
-impl Config {
-    pub fn new() -> Self {
+impl Default for Config {
+    fn default() -> Self {
         Self {
             send_clock: true,
             midi_ver: 10,
@@ -69,9 +69,10 @@ impl Config {
             population_path: String::new(),
         }
     }
+}
 
-    pub fn with_config_file(mut self) -> Self {
-        let path = std::env::args().nth(1).expect("must provide config file");
+impl Config {
+    pub fn with_config_file(mut self, path: &str) -> Self {
         if path == "-" {
             println!("<- using default configuration: {:?}", self);
             return self;
@@ -173,12 +174,6 @@ impl Config {
 
     pub fn population_path(&self) -> &Path {
         Path::new(&self.population_path)
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
