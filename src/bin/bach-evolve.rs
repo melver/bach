@@ -6,17 +6,14 @@
 
 use bach::evolve::*;
 use bach::ga::{self, Genome};
-use bach::sequencer::{self, ClipInst, SeqCall, TickClock};
+use bach::sequencer::{self, ClipInst, TickClock};
 use bach::units::*;
-use bach::Result;
 use rand::Rng;
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
-use std::hash::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -187,293 +184,6 @@ impl Prog {
         // stop() where needed.
     }
 
-    /// Evaluate the fitness of a clip without manual feedback based on some generic heuristics of
-    /// what sounds good (which is of course rather subjective).
-    fn eval(&self, clip: &mut ClipGenome) {
-        // Clock and sequencer for simulation.
-        let mut clock = sequencer::DummyClock::default();
-        let mut seq = sequencer::MidiSequencer::default();
-
-        let mut fitness = 0.0;
-        // Captures if we encountered error; if value is below 1.0, there were errors and the final
-        // fitness score is penalized.
-        let mut valid = 1.0;
-        if clip.clip.len() > 150 {
-            // Things will become slow if too large. But we also don't want to discard the
-            // information in potentially good genomes, so just slightly penalize them.
-            //
-            // It can still get to long clips by using jumps.
-            valid *= 0.9;
-        }
-
-        // Histogram of channel usage.
-        let mut chan_histogram: HashMap<u8, usize> = HashMap::new();
-
-        // Translate into nicer representation to analyze. Each element corresponds to the shortest
-        // beat, and each entry contains a list of notes that are playing.
-        let sheet = {
-            let mut sheet: Vec<Vec<Note>> = vec![];
-            let mut cur_beat: u32 = 0;
-            let mut insert_sheet = |idx: u32, note: Note| {
-                let idx_ = idx as usize;
-                if idx_ >= sheet.len() {
-                    sheet.resize(idx_ + 1, vec![]);
-                }
-                sheet[idx_].push(note);
-            };
-            let mut skip_inst = HashSet::new();
-            let mut inst_idx: isize = 0;
-            while inst_idx < clip.clip.len() as isize {
-                match &clip.clip[inst_idx as usize] {
-                    ClipInst::Tick(delta) => {
-                        // We still have to forward the sequencer to accurately detect if there are
-                        // errors when we try to queue notes.
-                        seq.forward_until(&mut clock, delta, &mut |_| ());
-                        match delta {
-                            Duration::Beats(b, bpb) if *bpb == cfg().beats_per_bar => {
-                                cur_beat += *b
-                            }
-                            _ => panic!("unexpected delta: {}", delta),
-                        }
-                    }
-                    ClipInst::Jmp(offset) => {
-                        if skip_inst.insert(inst_idx) {
-                            inst_idx = cmp::max(0, inst_idx + *offset as isize);
-                        }
-                    }
-                    ClipInst::Call(SeqCall::QueueNote(c, n, v, d)) => {
-                        if seq.queue_note(&clock, *c, n, v, d).is_err() {
-                            fitness -= 1.0;
-                        } else if let Duration::Beats(beats, _) = d {
-                            for b in 0..*beats {
-                                insert_sheet(cur_beat + b, n.clone());
-                                *(chan_histogram.entry(*c).or_default()) += 1;
-                            }
-                        } else {
-                            panic!("unexpected duration: {}", d);
-                        }
-                    }
-                    ClipInst::Call(SeqCall::QueueSequence(c, ns, v, d, p, l, o)) => {
-                        let eucl = sequencer::euclidean_sequence(*p, *l, *o);
-                        if seq
-                            .queue_sequence(&clock, *c, ns, v, d, &eucl, false)
-                            .is_err()
-                        {
-                            fitness -= 2.0;
-                        } else if let Duration::Beats(beats, _) = d {
-                            let mut notes = ns.iter().cycle();
-                            let mut beat_offset = 0;
-                            for &pulse in &eucl {
-                                if pulse {
-                                    let note = notes.next().unwrap();
-                                    for b in 0..*beats {
-                                        insert_sheet(cur_beat + beat_offset + b, note.clone());
-                                        *(chan_histogram.entry(*c).or_default()) += 1;
-                                    }
-                                }
-                                beat_offset += beats;
-                            }
-                        } else {
-                            panic!("{}", d);
-                        }
-                    }
-                    ClipInst::Call(SeqCall::QueueControl(_, _, _)) => {}
-                }
-
-                inst_idx += 1;
-            }
-            // Make it learn to insert "advance" at the end.
-            sheet.resize(cur_beat as usize + 1, vec![]);
-            assert_eq!(cur_beat as usize + 1, sheet.len());
-            sheet
-        };
-
-        if sheet.len() < cfg().beats_per_bar as usize {
-            // Remove instantly. Also various calculations below assume sheet is non-empty.
-            clip.fitness = Some(-1e6);
-            return;
-        }
-
-        // The harmony table assigns scores to note intervals (in semitone offsets).
-        let harmony_table = HashMap::from([
-            // Too many repeated same notes are uninteresting, but at the same time we do not want
-            // to prevent longer held notes completely. Don't penalize diff of 0 too much.
-            (0, -0.05),
-            (1, 0.05),
-            (2, 0.05),
-            (3, 0.50),
-            (4, 0.50),
-            (5, 0.30),
-            (6, -0.10),
-            (7, 0.50),
-            (8, 0.10),
-            (9, 0.40),
-            (10, -0.02),
-            (11, -0.02),
-            (12, 0.10),
-            (13, -0.05),
-            (14, 0.05),
-            (15, 0.05),
-            (16, 0.50),
-            (17, 0.50),
-            (18, 0.30),
-            (19, -0.10),
-            (20, 0.50),
-            (21, 0.10),
-            (22, 0.40),
-            (23, -0.02),
-            (24, -0.02),
-            (25, 0.10),
-            (26, -0.05),
-            (27, 0.05),
-            (28, 0.05),
-            (29, 0.50),
-            (30, 0.50),
-            (31, 0.30),
-            (32, -0.10),
-            (33, 0.50),
-            (34, 0.10),
-            (35, 0.40),
-            (36, -0.02),
-            (37, -0.02),
-            (38, 0.10),
-            (39, -0.05),
-            (40, 0.05),
-            (41, 0.05),
-            (42, 0.50),
-            (43, 0.50),
-            (44, 0.30),
-            (45, -0.10),
-            (46, 0.50),
-            (47, 0.10),
-            (48, 0.40),
-            (49, -0.02),
-            (50, -0.02),
-        ]);
-
-        // Calculate harmony score for simultanous notes (chords)
-        fitness += cfg().chord_weight * {
-            let mut chord_score = 0.0;
-            for beat_notes in &sheet {
-                for i in 0..beat_notes.len() {
-                    let note1 = &beat_notes[i];
-                    for note2 in beat_notes.iter().skip(i + 1) {
-                        let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
-                        let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
-                        let diff = (raw1 - raw2).abs();
-                        match harmony_table.get(&diff) {
-                            // Divide by the size of this chord, so that it prefers smaller but
-                            // overall better sounding chords.
-                            Some(harmony) => {
-                                let difficulty = beat_notes.len() as f32;
-                                if *harmony > 0.0 {
-                                    chord_score += harmony / difficulty;
-                                } else {
-                                    chord_score += harmony * difficulty;
-                                }
-                            }
-                            // Warn, so we may add the missing data in future.
-                            None => {
-                                valid *= 0.9;
-                                println!("<! no harmony score for interval of {}", diff);
-                            }
-                        }
-                    }
-                }
-            }
-            chord_score
-        };
-
-        // Calculate harmony score for non-simultaneous notes (melody).
-        fitness += cfg().melody_weight * {
-            let mut melody_score = 0.0;
-            // How many notes to look back at. This can be useful to produce longer interesting
-            // sequences.
-            let scan_back = 2;
-            for i in scan_back..sheet.len() {
-                for back in 1..=scan_back {
-                    let beat_notes1 = &sheet[i - back];
-                    let beat_notes2 = &sheet[i];
-                    let total_notes = beat_notes1.len() + beat_notes2.len();
-                    for note1 in beat_notes1 {
-                        for note2 in beat_notes2 {
-                            let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
-                            let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
-                            let diff = (raw1 - raw2).abs();
-                            match harmony_table.get(&diff) {
-                                Some(harmony) => {
-                                    // Difficulty decreases the more notes we look back.
-                                    let difficulty = total_notes as f32 / back as f32;
-                                    if *harmony > 0.0 {
-                                        melody_score += harmony / difficulty;
-                                    } else {
-                                        melody_score += harmony * difficulty;
-                                    }
-                                }
-                                None => {
-                                    valid *= 0.9;
-                                    println!("<! no harmony score for interval of {}", diff);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            melody_score
-        };
-
-        // Score balanced channel usage. Calculating penalty is more intuitive, so we will
-        // subtract the penalty, however, the "weight" denotes a positive property.
-        fitness -= cfg().chan_balance_weight * {
-            let mut penalty = 0.0;
-            // This may differ from sheet.len() because the sheet is resized at the end.
-            let total_count: usize = chan_histogram.iter().map(|(_, &v)| v).sum();
-            let ideal_frac = 1.0 / (cfg().channel_count() as f32);
-            for &count in chan_histogram.values() {
-                let frac = (count as f32) / (total_count as f32);
-                penalty += (ideal_frac - frac).abs();
-            }
-            assert!(chan_histogram.len() <= cfg().channel_count() as usize);
-            let unused_chans = cfg().channel_count() as usize - chan_histogram.len();
-            penalty += ideal_frac * (unused_chans as f32);
-            penalty
-        };
-
-        // Score too many rests.
-        fitness += cfg().rest_weight * {
-            let rest_count = sheet.iter().filter(|e| e.is_empty()).count();
-            rest_count as f32
-        };
-
-        // Score duplicates: compute hashes of all time windows, and count unique hashes.
-        fitness += cfg().dup_weight * {
-            let window_size = cfg().beats_per_bar as usize / 2;
-            let mut window_counts: HashMap<u64, usize> = HashMap::new();
-            for window_start in 0..=(sheet.len() - window_size) {
-                let mut hasher = DefaultHasher::new();
-                for beat in &sheet[window_start..(window_start + window_size)] {
-                    Hash::hash_slice(beat, &mut hasher);
-                }
-                let hash = hasher.finish();
-                *(window_counts.entry(hash).or_default()) += 1;
-            }
-            //let dups: usize = window_counts.iter().filter(|(_, &v)| v > 1).map(|(_, &v)| v).sum();
-            let dups = window_counts.iter().filter(|(_, &v)| v > 1).count();
-            (dups as f32) / (sheet.len() as f32).log(3.0)
-        };
-
-        // Normalize fitness against length.
-        // Prefer shorter but higher density sequences.
-        fitness /= 1.0 + (sheet.len() as f32).log(1.2);
-
-        assert_ne!(fitness, f32::INFINITY);
-        clip.fitness = if fitness > 0.0 {
-            Some(fitness * valid)
-        } else {
-            Some(fitness / valid)
-        };
-    }
-
     /// Return true if program should keep running, false otherwise.
     #[must_use]
     fn cmd_prompt(&self, mut clip: Option<&mut ClipGenome>) -> bool {
@@ -490,7 +200,7 @@ impl Prog {
             match &mut clip {
                 Some(clip) => {
                     if cmd == "a" {
-                        self.eval(clip);
+                        clip.eval();
                     } else if cmd == "b" {
                         return true;
                     } else if let Some(suffix) = cmd.strip_prefix('c') {
@@ -864,7 +574,7 @@ impl Prog {
                 println!("<- evaluating clip from generation {}", clip.0);
 
                 if auto_eval {
-                    self.eval(&mut clip.1);
+                    clip.1.eval();
                 } else {
                     self.play(&clip.1);
                     self.stop();
