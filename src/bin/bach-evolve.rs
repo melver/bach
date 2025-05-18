@@ -49,7 +49,7 @@ fn prompt(prompt: &str) -> String {
 }
 
 struct Prog {
-    midi_file: RefCell<fs::File>,
+    midi_device: RefCell<fs::File>,
     clock: RefCell<sequencer::SystemClock>,
     seq: RefCell<sequencer::MidiSequencer>,
     pool: RefCell<ga::GenomePool<ClipGenome>>,
@@ -76,7 +76,7 @@ impl Prog {
             .expect("must provide MIDI output device");
 
         Self {
-            midi_file: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
+            midi_device: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
             clock: RefCell::new(sequencer::SystemClock::new(bpm, ppqn)),
             seq: RefCell::new(sequencer::MidiSequencer::new(
                 cfg().send_clock,
@@ -95,10 +95,10 @@ impl Prog {
     fn tick_until(&self, duration: &Duration) {
         let mut clock = self.clock.borrow_mut();
         let mut seq = self.seq.borrow_mut();
-        let mut midi_file = self.midi_file.borrow_mut();
+        let mut midi_device = self.midi_device.borrow_mut();
         seq.tick_until(&mut *clock, duration, &mut |b| {
-            midi_file.write_all(b).unwrap();
-            midi_file.flush().unwrap();
+            midi_device.write_all(b).unwrap();
+            midi_device.flush().unwrap();
             is_running()
         });
     }
@@ -106,9 +106,9 @@ impl Prog {
     fn stop(&self) {
         // Stop all still playing notes.
         let stop_clip = self.seq.borrow_mut().stop();
-        let mut midi_file = self.midi_file.borrow_mut();
-        midi_file.write_all(&stop_clip).unwrap();
-        midi_file.flush().unwrap();
+        let mut midi_device = self.midi_device.borrow_mut();
+        midi_device.write_all(&stop_clip).unwrap();
+        midi_device.flush().unwrap();
         self.clock.borrow_mut().reset();
     }
 
