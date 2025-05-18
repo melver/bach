@@ -3,11 +3,11 @@
 
 //! Common helpers for auto-evolution sequencer programs.
 
+use crate::Result;
 use crate::ga::{self, Genome};
 use crate::sequencer::{self, Clip, ClipInst, SeqCall};
 use crate::units::*;
-use crate::Result;
-use rand::{rngs::ThreadRng, Rng};
+use rand::{Rng, rngs::ThreadRng};
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -683,8 +683,8 @@ impl ClipGenome {
                 let hash = hasher.finish();
                 *(window_counts.entry(hash).or_default()) += 1;
             }
-            //let dups: usize = window_counts.iter().filter(|(_, &v)| v > 1).map(|(_, &v)| v).sum();
-            let dups = window_counts.iter().filter(|(_, &v)| v > 1).count();
+            //let dups: usize = window_counts.iter().filter(|&(_, &v)| v > 1).map(|(_, &v)| v).sum();
+            let dups = window_counts.iter().filter(|&(_, &v)| v > 1).count();
             (dups as f32) / (sheet.len() as f32).log(3.0)
         };
 
@@ -758,7 +758,7 @@ impl Genome for ClipGenome {
                 }
                 ClipInst::Call(SeqCall::QueueSequence(
                     chan,
-                    ref notes,
+                    notes,
                     velocity,
                     duration,
                     pulses,

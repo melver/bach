@@ -3,10 +3,10 @@
 
 //! MIDI sequencer implementation that takes care of timing and generating MIDI messages.
 
+use crate::Result;
 use crate::midi::*;
 use crate::units::*;
 use crate::vm::*;
-use crate::Result;
 use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
@@ -1061,15 +1061,16 @@ mod tests {
             &Duration::Ticks(10),
         )
         .unwrap();
-        assert!(seq
-            .queue_note(
+        assert!(
+            seq.queue_note(
                 &clock,
                 0,
                 &Note::Raw(60),
                 &Velocity::Raw(100),
                 &Duration::Ticks(2),
             )
-            .is_err());
+            .is_err()
+        );
         let _ = seq.tick(&clock);
         clock.await_tick();
         // Play on same tick as we are turning it off.
@@ -1083,9 +1084,10 @@ mod tests {
         .unwrap();
         assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0, 0x90, 60, 101]);
         // Trying to cancel a limited note does not work.
-        assert!(seq
-            .queue_note(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
-            .is_err());
+        assert!(
+            seq.queue_note(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1121,15 +1123,16 @@ mod tests {
         clock.await_tick();
 
         // Restarting already playing note doesn't make sense.
-        assert!(seq
-            .queue_note(
+        assert!(
+            seq.queue_note(
                 &clock,
                 0,
                 &Note::Raw(60),
                 &Velocity::Raw(101),
                 &Duration::Begin,
             )
-            .is_err());
+            .is_err()
+        );
         // We can stop it now.
         seq.queue_note(&clock, 0, &Note::Raw(60), &Velocity::None, &Duration::End)
             .unwrap();

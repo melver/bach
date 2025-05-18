@@ -16,8 +16,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 static CONFIG: LazyLock<Config> = LazyLock::new(|| {
@@ -288,7 +288,7 @@ impl Prog {
                     if let Some(suffix) = cmd.strip_prefix("a ") {
                         let pool = self.pool.borrow();
                         match suffix.parse::<u64>() {
-                            Ok(gen) => self.eval_until.set(pool.generation() + gen),
+                            Ok(it) => self.eval_until.set(pool.generation() + it),
                             Err(e) => println!("<! invalid generation: {}", e),
                         }
                         return true;

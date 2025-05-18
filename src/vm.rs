@@ -149,11 +149,7 @@ impl Inst {
                         (Op::Int(i1), Op::Float(f2)) => (i1 as f32) < f2,
                         (Op::Float(f1), Op::Int(i2)) => f1 < (i2 as f32),
                     };
-                    if lt {
-                        Ok(offset)
-                    } else {
-                        Ok(1)
-                    }
+                    if lt { Ok(offset) } else { Ok(1) }
                 }
             }
             Inst::Jmpz => {
