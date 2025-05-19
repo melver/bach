@@ -51,12 +51,12 @@ impl MidiMsg {
                 let attr_data = 0;
 
                 let word1 = ((mt_and_group as u32) << 24)
-                    | ((opcode | chan) as u32) << 16
-                    | (note as u32) << 8
+                    | (((opcode | chan) as u32) << 16)
+                    | ((note as u32) << 8)
                     | ((velocity_u16 >> 8) as u32);
 
-                let word2 = ((velocity_u16 & 0xff) as u32) << 24
-                    | (attr_type as u32) << 16
+                let word2 = (((velocity_u16 & 0xff) as u32) << 24)
+                    | ((attr_type as u32) << 16)
                     | (attr_data as u32);
 
                 word1
@@ -78,12 +78,12 @@ impl MidiMsg {
                 let attr_data = 0;
 
                 let word1 = ((mt_and_group as u32) << 24)
-                    | ((opcode | chan) as u32) << 16
-                    | (note_u8 as u32) << 8
+                    | (((opcode | chan) as u32) << 16)
+                    | ((note_u8 as u32) << 8)
                     | ((velocity_u16 >> 8) as u32);
 
-                let word2 = ((velocity_u16 & 0xff) as u32) << 24
-                    | (attr_type as u32) << 16
+                let word2 = (((velocity_u16 & 0xff) as u32) << 24)
+                    | ((attr_type as u32) << 16)
                     | (attr_data as u32);
 
                 word1
@@ -102,8 +102,8 @@ impl MidiMsg {
                 let val_u32 = (val as u32) * 0x010101; // Upsample 7-bit to 32-bit
 
                 let word1 = ((mt_and_group as u32) << 24)
-                    | ((opcode | ch) as u32) << 16
-                    | (cc_u8 as u32) << 8;
+                    | (((opcode | ch) as u32) << 16)
+                    | ((cc_u8 as u32) << 8);
 
                 let word2 = val_u32;
 
