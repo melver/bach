@@ -16,6 +16,65 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
+// === Globals =================================================================
+
+// The harmony table assigns scores to note intervals (in semitone offsets).
+pub const DEFAULT_HARMONY_TABLE: [(i32, f32); 51] = [
+    // Too many repeated same notes are uninteresting, but at the same time we do not want
+    // to prevent longer held notes completely. Don't penalize diff of 0 too much.
+    (0, -0.05),
+    (1, 0.05),
+    (2, 0.05),
+    (3, 0.50),
+    (4, 0.50),
+    (5, 0.30),
+    (6, -0.10),
+    (7, 0.50),
+    (8, 0.10),
+    (9, 0.40),
+    (10, -0.02),
+    (11, -0.02),
+    (12, 0.10),
+    (13, -0.05),
+    (14, 0.05),
+    (15, 0.05),
+    (16, 0.50),
+    (17, 0.50),
+    (18, 0.30),
+    (19, -0.10),
+    (20, 0.50),
+    (21, 0.10),
+    (22, 0.40),
+    (23, -0.02),
+    (24, -0.02),
+    (25, 0.10),
+    (26, -0.05),
+    (27, 0.05),
+    (28, 0.05),
+    (29, 0.50),
+    (30, 0.50),
+    (31, 0.30),
+    (32, -0.10),
+    (33, 0.50),
+    (34, 0.10),
+    (35, 0.40),
+    (36, -0.02),
+    (37, -0.02),
+    (38, 0.10),
+    (39, -0.05),
+    (40, 0.05),
+    (41, 0.05),
+    (42, 0.50),
+    (43, 0.50),
+    (44, 0.30),
+    (45, -0.10),
+    (46, 0.50),
+    (47, 0.10),
+    (48, 0.40),
+    (49, -0.02),
+    (50, -0.02),
+];
+
 // === Config ==================================================================
 
 #[derive(Debug)]
@@ -33,6 +92,7 @@ pub struct Config {
     pub chan_balance_weight: f32,
     pub rest_weight: f32,
     pub dup_weight: f32,
+    pub harmony_table: HashMap<i32, f32>,
     pub skip_allocated: bool,
     pub clip_init_len: usize,
     pub clip_tail: Duration,
@@ -61,6 +121,7 @@ impl Default for Config {
             chan_balance_weight: 1.0,
             rest_weight: -1.0,
             dup_weight: -1.0,
+            harmony_table: HashMap::from(DEFAULT_HARMONY_TABLE),
             clip_init_len: 30,
             clip_fixed_len: true,
             song_continue: true,
@@ -122,6 +183,12 @@ impl Config {
                 self.rest_weight = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("dup_weight ") {
                 self.dup_weight = suffix.parse().unwrap();
+            } else if let Some(suffix) = line.strip_prefix("harmony_table ") {
+                let parts: Vec<&str> = suffix.split(' ').collect();
+                for (offset, part) in parts.iter().enumerate() {
+                    let score = part.parse().unwrap();
+                    self.harmony_table.insert(offset as i32, score);
+                }
             } else if let Some(suffix) = line.strip_prefix("skip_allocated ") {
                 self.skip_allocated = suffix.parse().unwrap();
             } else if let Some(suffix) = line.strip_prefix("clip_init_len ") {
@@ -520,62 +587,7 @@ impl ClipGenome {
             return;
         }
 
-        // The harmony table assigns scores to note intervals (in semitone offsets).
-        let harmony_table = HashMap::from([
-            // Too many repeated same notes are uninteresting, but at the same time we do not want
-            // to prevent longer held notes completely. Don't penalize diff of 0 too much.
-            (0, -0.05),
-            (1, 0.05),
-            (2, 0.05),
-            (3, 0.50),
-            (4, 0.50),
-            (5, 0.30),
-            (6, -0.10),
-            (7, 0.50),
-            (8, 0.10),
-            (9, 0.40),
-            (10, -0.02),
-            (11, -0.02),
-            (12, 0.10),
-            (13, -0.05),
-            (14, 0.05),
-            (15, 0.05),
-            (16, 0.50),
-            (17, 0.50),
-            (18, 0.30),
-            (19, -0.10),
-            (20, 0.50),
-            (21, 0.10),
-            (22, 0.40),
-            (23, -0.02),
-            (24, -0.02),
-            (25, 0.10),
-            (26, -0.05),
-            (27, 0.05),
-            (28, 0.05),
-            (29, 0.50),
-            (30, 0.50),
-            (31, 0.30),
-            (32, -0.10),
-            (33, 0.50),
-            (34, 0.10),
-            (35, 0.40),
-            (36, -0.02),
-            (37, -0.02),
-            (38, 0.10),
-            (39, -0.05),
-            (40, 0.05),
-            (41, 0.05),
-            (42, 0.50),
-            (43, 0.50),
-            (44, 0.30),
-            (45, -0.10),
-            (46, 0.50),
-            (47, 0.10),
-            (48, 0.40),
-            (49, -0.02),
-            (50, -0.02),
-        ]);
+        let harmony_table = &self.cfg().harmony_table;
 
         // Calculate harmony score for simultanous notes (chords)
         fitness += self.cfg().chord_weight * {
@@ -584,8 +596,8 @@ impl ClipGenome {
                 for i in 0..beat_notes.len() {
                     let note1 = &beat_notes[i];
                     for note2 in beat_notes.iter().skip(i + 1) {
-                        let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
-                        let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
+                        let raw1 = <Result<u8>>::from(note1).unwrap() as i32;
+                        let raw2 = <Result<u8>>::from(note2).unwrap() as i32;
                         let diff = (raw1 - raw2).abs();
                         match harmony_table.get(&diff) {
                             // Divide by the size of this chord, so that it prefers smaller but
@@ -623,8 +635,8 @@ impl ClipGenome {
                     let total_notes = beat_notes1.len() + beat_notes2.len();
                     for note1 in beat_notes1 {
                         for note2 in beat_notes2 {
-                            let raw1 = <Result<u8>>::from(note1).unwrap() as i8;
-                            let raw2 = <Result<u8>>::from(note2).unwrap() as i8;
+                            let raw1 = <Result<u8>>::from(note1).unwrap() as i32;
+                            let raw2 = <Result<u8>>::from(note2).unwrap() as i32;
                             let diff = (raw1 - raw2).abs();
                             match harmony_table.get(&diff) {
                                 Some(harmony) => {
