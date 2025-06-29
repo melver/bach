@@ -248,7 +248,7 @@ impl Config {
 
 // === ClipGenome ==============================================================
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct ClipGenome {
     /// The clip of notes.
     pub clip: Clip,
