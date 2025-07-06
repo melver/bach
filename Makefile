@@ -27,6 +27,7 @@ clippy:
 		-A clippy::comparison_chain \
 		-A clippy::manual_range_contains \
 		-A clippy::type_complexity \
+		-A clippy::uninlined-format-args \
 		-D warnings
 
 .PHONY: clean
