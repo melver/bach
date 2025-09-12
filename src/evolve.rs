@@ -77,7 +77,7 @@ pub const DEFAULT_HARMONY_TABLE: [(i32, f32); 51] = [
 
 // === Config ==================================================================
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub send_clock: bool,
     pub midi_ver: u32,
