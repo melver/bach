@@ -304,6 +304,11 @@ impl<G: Genome + Default> GenomePool<G> {
         // FIXME: Consider using some hashing function.
         (self.generation as usize) ^ self.population.as_ptr() as usize
     }
+
+    /// Returns true if the provided GenomeRef is valid.
+    pub fn is_valid_ref(&self, idx: &GenomeRef) -> bool {
+        self.get_tag() == idx.0
+    }
 }
 
 impl<G: Genome + Default> Index<&GenomeRef> for GenomePool<G> {
@@ -461,10 +466,13 @@ mod tests {
         ]);
         let s1 = pool.select_all();
         assert_eq!(42, pool[&s1[1]].1.id);
+        assert!(pool.is_valid_ref(&s1[1]));
         pool.step(&s1, &[s1[0]]);
         let s2 = pool.select_oldest();
         assert_eq!(42, pool[&s2].1.id);
         assert_ne!(s2, s1[1]); // reference should be different
+        assert!(pool.is_valid_ref(&s2));
+        assert!(!pool.is_valid_ref(&s1[1]));
     }
 
     #[test]
