@@ -190,9 +190,7 @@ impl TickClockBase {
             ..Default::default()
         }
     }
-}
 
-impl TickClockBase {
     /// Reset all internal state to the initial tick.
     fn reset(&mut self) {
         self.tick = 0
@@ -407,9 +405,6 @@ impl MidiSequencer {
     where
         TC: TickClock + ?Sized,
     {
-        // TickClock::await_tick() should be called after we're done with all processing.
-        assert!(tick_clock.tick() == self.tick, "unsynchronized clock");
-
         let mut queue_opt = self.queue.remove(&self.tick);
         self.tick += 1; // advance tick
 
@@ -490,21 +485,21 @@ impl MidiSequencer {
             return Err(format!("invalid velocity: {}", off_velocity));
         }
 
-        if let Some(expiration) = self.allocated.get(&(chan, note)) {
-            if begin_tick < *expiration {
-                match ticks {
-                    Some(0) => {
-                        if *expiration != u64::MAX {
-                            return Err(format!("cannot stop limited note: {}", note));
-                        }
+        if let Some(expiration) = self.allocated.get(&(chan, note))
+            && begin_tick < *expiration
+        {
+            match ticks {
+                Some(0) => {
+                    if *expiration != u64::MAX {
+                        return Err(format!("cannot stop limited note: {}", note));
                     }
-                    // We can't start a note that has not yet expired.
-                    Some(_) | None => {
-                        if skip_allocated {
-                            return Ok(());
-                        } else {
-                            return Err(format!("already allocated note: {}", note));
-                        }
+                }
+                // We can't start a note that has not yet expired.
+                Some(_) | None => {
+                    if skip_allocated {
+                        return Ok(());
+                    } else {
+                        return Err(format!("already allocated note: {}", note));
                     }
                 }
             }
