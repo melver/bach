@@ -96,8 +96,8 @@ impl Prog {
         let mut clock = self.clock.borrow_mut();
         let mut seq = self.seq.borrow_mut();
         let mut midi_device = self.midi_device.borrow_mut();
-        seq.tick_until(&mut *clock, duration, &mut |b| {
-            midi_device.write_all(b).unwrap();
+        seq.tick_until(&mut *clock, duration, &mut |msgs| {
+            midi_device.write_all(&msgs.concat()).unwrap();
             midi_device.flush().unwrap();
             is_running()
         });
@@ -107,7 +107,7 @@ impl Prog {
         // Stop all still playing notes.
         let stop_clip = self.seq.borrow_mut().stop();
         let mut midi_device = self.midi_device.borrow_mut();
-        midi_device.write_all(&stop_clip).unwrap();
+        midi_device.write_all(&stop_clip.concat()).unwrap();
         midi_device.flush().unwrap();
         self.clock.borrow_mut().reset();
     }

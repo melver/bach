@@ -92,7 +92,7 @@ fn main() {
         let mut seq = vmstate.seq.borrow_mut();
         let mut clock = vmstate.clock.borrow_mut();
         seq.tick_until(clock.as_mut(), &tick_delta, &mut |b| {
-            io::stdout().write_all(b).unwrap();
+            io::stdout().write_all(&b.concat()).unwrap();
             io::stdout().flush().unwrap();
             true
         });
@@ -100,6 +100,6 @@ fn main() {
 
     // Stop all still playing notes.
     io::stdout()
-        .write_all(&vmstate.seq.borrow_mut().stop())
+        .write_all(&vmstate.seq.borrow_mut().stop().concat())
         .unwrap();
 }

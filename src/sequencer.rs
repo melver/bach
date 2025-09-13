@@ -377,7 +377,7 @@ pub struct MidiSequencer {
     /// MIDI version.
     midi_ver: u32,
     /// Map of tick to queued raw messages.
-    queue: HashMap<u64, Vec<u8>>,
+    queue: HashMap<u64, Vec<Vec<u8>>>,
     /// Map of allocated notes (channel, note) and their expiration tick. This is to avoid
     /// accidentally attempting to concurrently play the same note; a note may already be stopped
     /// but still be allocated, e.g. when part of a sequence that has not yet completed.
@@ -401,7 +401,7 @@ impl MidiSequencer {
     /// Advance to the next tick and return the MIDI message stream to be sent to a compatible MIDI
     /// device.
     #[must_use]
-    pub fn tick<TC>(&mut self, tick_clock: &TC) -> Vec<u8>
+    pub fn tick<TC>(&mut self, tick_clock: &TC) -> Vec<Vec<u8>>
     where
         TC: TickClock + ?Sized,
     {
@@ -413,7 +413,7 @@ impl MidiSequencer {
             .unwrap();
         if self.send_clock && (self.tick - 1) % ticks_per_clock == 0 {
             // Clock has highest priority; send it first.
-            let mut ret: Vec<u8> = MidiMsg::Clock.to_midi(self.midi_ver);
+            let mut ret = vec![MidiMsg::Clock.to_midi(self.midi_ver)];
             if let Some(ref mut queue) = queue_opt {
                 ret.append(queue);
             }
@@ -427,16 +427,16 @@ impl MidiSequencer {
     pub fn tick_until<F, TC>(&mut self, tick_clock: &mut TC, delta: &Duration, send_midi: &mut F)
     where
         TC: TickClock + ?Sized,
-        F: FnMut(&[u8]) -> bool,
+        F: FnMut(&[Vec<u8>]) -> bool,
     {
         let until_tick = match tick_clock.get_ticks(delta) {
             Some(t) => self.tick + t,
             _ => panic!("not a valid tick delta: {}", delta),
         };
         while self.tick != until_tick {
-            let midi_bytes = self.tick(tick_clock);
+            let midi_msgs = self.tick(tick_clock);
             tick_clock.await_tick();
-            if !send_midi(&midi_bytes) {
+            if !send_midi(&midi_msgs) {
                 break;
             }
         }
@@ -446,16 +446,16 @@ impl MidiSequencer {
     pub fn forward_until<F, TC>(&mut self, tick_clock: &mut TC, delta: &Duration, send_midi: &mut F)
     where
         TC: TickClock + ?Sized,
-        F: FnMut(&[u8]),
+        F: FnMut(&[Vec<u8>]),
     {
         let until_tick = match tick_clock.get_ticks(delta) {
             Some(t) => self.tick + t,
             _ => panic!("not a valid tick delta: {}", delta),
         };
         while self.tick != until_tick {
-            let midi_bytes = self.tick(tick_clock);
+            let midi_msgs = self.tick(tick_clock);
             tick_clock.forward_tick(1);
-            send_midi(&midi_bytes);
+            send_midi(&midi_msgs);
         }
     }
 
@@ -516,7 +516,7 @@ impl MidiSequencer {
             self.queue
                 .entry(begin_tick)
                 .or_default()
-                .append(&mut on_msg.to_midi(self.midi_ver));
+                .push(on_msg.to_midi(self.midi_ver));
         }
 
         if end_tick != u64::MAX {
@@ -525,7 +525,7 @@ impl MidiSequencer {
             self.queue
                 .entry(end_tick)
                 .or_default()
-                .append(&mut off_msg.to_midi(self.midi_ver));
+                .push(off_msg.to_midi(self.midi_ver));
         }
 
         self.allocated.insert((chan, note), end_tick);
@@ -640,7 +640,7 @@ impl MidiSequencer {
         self.queue
             .entry(self.tick)
             .or_default()
-            .append(&mut msg.to_midi(self.midi_ver));
+            .push(msg.to_midi(self.midi_ver));
 
         Ok(())
     }
@@ -648,14 +648,14 @@ impl MidiSequencer {
     /// Stop playing and return the last stream of MIDI messages to stop playing any currently
     /// playing notes. Resets the current tick back to 0.
     #[must_use]
-    pub fn stop(&mut self) -> Vec<u8> {
+    pub fn stop(&mut self) -> Vec<Vec<u8>> {
         let mut stop_msgs = vec![];
 
         // Note: Beware non-stable iteration order.
         for ((chan, note), end_tick) in self.allocated.drain() {
             if self.tick <= end_tick {
                 let off_msg = MidiMsg::NoteOff(chan, note, 0);
-                stop_msgs.append(&mut off_msg.to_midi(self.midi_ver));
+                stop_msgs.push(off_msg.to_midi(self.midi_ver));
             }
         }
 
@@ -887,13 +887,13 @@ mod tests {
             &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.await_tick();
     }
 
@@ -909,13 +909,13 @@ mod tests {
             &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.await_tick();
     }
 
@@ -931,13 +931,13 @@ mod tests {
             &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x91, 60, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.await_tick();
     }
 
@@ -953,13 +953,13 @@ mod tests {
             &Duration::Beats(3, 4 * clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
         clock.forward_tick(1);
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.forward_tick(1);
-        assert_eq!(seq.tick(&clock), vec![0xf8]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8]);
         clock.forward_tick(1);
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.forward_tick(1);
     }
 
@@ -983,7 +983,10 @@ mod tests {
             &Duration::Beats(1, clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64, 0x91, 62, 64]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x91, 60, 64, 0x91, 62, 64]
+        );
         clock.await_tick();
         seq.queue_note(
             &clock,
@@ -993,13 +996,16 @@ mod tests {
             &Duration::Beats(1, 4 * clock.ppqn()),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0x91, 64, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x91, 64, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 64, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x81, 64, 0]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![]);
+        assert_eq!(seq.tick(&clock).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 60, 0, 0x81, 62, 0]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x81, 60, 0, 0x81, 62, 0]
+        );
         clock.await_tick();
     }
 
@@ -1017,19 +1023,19 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 62, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 62, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x81, 62, 0, 0x91, 64, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 62, 0, 0x91, 64, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 64, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x81, 64, 0]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0x91, 60, 64]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x91, 60, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x81, 60, 0]);
         clock.await_tick();
     }
 
@@ -1045,7 +1051,7 @@ mod tests {
             &Duration::Ticks(2),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x90, 60, 100]);
         clock.await_tick();
         // Different channel is ok.
         seq.queue_note(
@@ -1077,7 +1083,10 @@ mod tests {
             &Duration::Ticks(2),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0, 0x90, 60, 101]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x80, 60, 0, 0x90, 60, 101]
+        );
         // Trying to cancel a limited note does not work.
         assert!(
             seq.queue_note(&clock, 1, &Note::Raw(60), &Velocity::None, &Duration::End)
@@ -1102,7 +1111,10 @@ mod tests {
         seq.queue_note(&clock, 0, &Note::Raw(60), &Velocity::Raw(3), &Duration::End)
             .unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100, 0x80, 60, 3]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x90, 60, 100, 0x80, 60, 3]
+        );
         clock.await_tick();
 
         seq.queue_note(
@@ -1114,7 +1126,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0x90, 60, 101]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x90, 60, 101]);
         clock.await_tick();
 
         // Restarting already playing note doesn't make sense.
@@ -1132,7 +1144,7 @@ mod tests {
         seq.queue_note(&clock, 0, &Note::Raw(60), &Velocity::None, &Duration::End)
             .unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x80, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x80, 60, 0]);
         clock.await_tick();
     }
 
@@ -1150,14 +1162,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x90, 60, 100]);
         clock.await_tick();
 
-        assert_eq!(seq.tick(&clock), vec![0x80, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x80, 60, 0]);
         clock.await_tick();
 
         // All notes played and stopped, nothing to stop.
-        assert_eq!(seq.stop(), vec![]);
+        assert_eq!(seq.stop().concat(), vec![]);
         clock.reset();
 
         // Restart
@@ -1177,11 +1189,14 @@ mod tests {
             &Duration::Ticks(1),
         )
         .unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 99, 0x93, 61, 98]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x90, 60, 99, 0x93, 61, 98]
+        );
         clock.await_tick();
 
         // Turn it off.
-        let stop_msgs = seq.stop();
+        let stop_msgs = seq.stop().concat();
         assert!(
             stop_msgs == vec![0x80, 60, 0, 0x83, 61, 0]
                 || stop_msgs == vec![0x83, 61, 0, 0x80, 60, 0]
@@ -1204,14 +1219,17 @@ mod tests {
 
         seq.queue_control(3, 5, 42).unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x90, 60, 100, 0xb3, 5, 42]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x90, 60, 100, 0xb3, 5, 42]
+        );
         clock.await_tick();
 
-        assert_eq!(seq.tick(&clock), vec![0x80, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x80, 60, 0]);
         clock.await_tick();
 
         seq.queue_control(0, 8, 111).unwrap();
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0xb0, 8, 111]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0xb0, 8, 111]);
     }
 
     #[test]
@@ -1229,7 +1247,10 @@ mod tests {
         .unwrap();
         seq.queue_control(2, 5, 42).unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0xf8, 0x91, 60, 100, 0xb2, 5, 42]);
+        assert_eq!(
+            seq.tick(&clock).concat(),
+            vec![0xf8, 0x91, 60, 100, 0xb2, 5, 42]
+        );
         clock.await_tick();
 
         // Does not affect already queued messages, e.g. stop messages are still being sent to the
@@ -1237,7 +1258,7 @@ mod tests {
         seq.insert_chan_map(1, 5).unwrap();
         seq.insert_chan_map(2, 6).unwrap();
 
-        assert_eq!(seq.tick(&clock), vec![0x81, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x81, 60, 0]);
         clock.await_tick();
 
         seq.queue_note(
@@ -1259,17 +1280,17 @@ mod tests {
         seq.queue_control(2, 8, 111).unwrap();
 
         assert_eq!(
-            seq.tick(&clock),
+            seq.tick(&clock).concat(),
             vec![0xf8, 0x95, 60, 100, 0x95, 61, 100, 0xb6, 8, 111]
         );
         clock.await_tick();
 
-        assert_eq!(seq.tick(&clock), vec![0x85, 60, 0]);
+        assert_eq!(seq.tick(&clock).concat(), vec![0x85, 60, 0]);
         clock.await_tick();
 
         // Stop still gets the right channel after new mapping.
         seq.insert_chan_map(1, 1).unwrap();
-        assert_eq!(seq.stop(), vec![0x85, 61, 0]);
+        assert_eq!(seq.stop().concat(), vec![0x85, 61, 0]);
 
         // Input value sanitization.
         assert!(seq.insert_chan_map(30, 3).is_err());
@@ -1322,13 +1343,13 @@ mod tests {
         core.eval(None).unwrap();
         let mut seq = vmstate.seq.borrow_mut();
         let mut clock = vmstate.clock.borrow_mut();
-        assert_eq!(seq.tick(clock.as_ref()), vec![0xf8, 0x99, 65, 64]);
+        assert_eq!(seq.tick(clock.as_ref()).concat(), vec![0xf8, 0x99, 65, 64]);
         clock.await_tick();
-        assert_eq!(seq.tick(clock.as_ref()), vec![]);
+        assert_eq!(seq.tick(clock.as_ref()).concat(), vec![]);
         clock.await_tick();
-        assert_eq!(seq.tick(clock.as_ref()), vec![0xf8]);
+        assert_eq!(seq.tick(clock.as_ref()).concat(), vec![0xf8]);
         clock.await_tick();
-        assert_eq!(seq.tick(clock.as_ref()), vec![0x89, 65, 0]);
+        assert_eq!(seq.tick(clock.as_ref()).concat(), vec![0x89, 65, 0]);
         clock.await_tick();
     }
 }

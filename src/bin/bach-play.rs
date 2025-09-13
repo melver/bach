@@ -32,16 +32,16 @@ fn main() {
         .expect("must provide MIDI output device");
 
     let input_file = fs::File::open(input_path).unwrap();
-    let mut midi_write: Box<dyn FnMut(&[u8]) -> bool> = if midi_path == "-" {
+    let mut midi_write: Box<dyn FnMut(&[Vec<u8>]) -> bool> = if midi_path == "-" {
         Box::new(|b| -> bool {
-            io::stdout().write_all(b).unwrap();
+            io::stdout().write_all(&b.concat()).unwrap();
             io::stdout().flush().unwrap();
             true
         })
     } else {
         let mut f = fs::OpenOptions::new().write(true).open(&midi_path).unwrap();
         Box::new(move |b| -> bool {
-            f.write_all(b).unwrap();
+            f.write_all(&b.concat()).unwrap();
             f.flush().unwrap();
             true
         })
