@@ -16,19 +16,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-static CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    let path = std::env::args().nth(1).expect("must provide config file");
-    Config::default().with_config_file(&path)
-});
 static RUNNING: AtomicBool = AtomicBool::new(true);
-
-fn cfg() -> &'static Config {
-    &CONFIG
-}
 
 fn is_running() -> bool {
     RUNNING.load(Ordering::Relaxed)
@@ -49,6 +41,7 @@ fn prompt(prompt: &str) -> String {
 }
 
 struct Prog {
+    cfg: Arc<Config>,
     midi_device: RefCell<fs::File>,
     clock: RefCell<sequencer::SystemClock>,
     seq: RefCell<sequencer::MidiSequencer>,
@@ -61,6 +54,7 @@ struct Prog {
 
 impl Prog {
     fn new() -> Self {
+        let cfg_path = std::env::args().nth(1).expect("must provide config file");
         let bpm: u32 = std::env::args()
             .nth(2)
             .expect("must provide BPM")
@@ -75,21 +69,24 @@ impl Prog {
             .nth(4)
             .expect("must provide MIDI output device");
 
+        let cfg = Arc::new(Config::default().with_config_file(&cfg_path));
         Self {
+            cfg: cfg.clone(),
             midi_device: RefCell::new(fs::OpenOptions::new().write(true).open(midi_path).unwrap()),
             clock: RefCell::new(sequencer::SystemClock::new(bpm, ppqn)),
-            seq: RefCell::new(sequencer::MidiSequencer::new(
-                cfg().send_clock,
-                cfg().midi_ver,
-            )),
+            seq: RefCell::new(sequencer::MidiSequencer::new(cfg.send_clock, cfg.midi_ver)),
             pool: RefCell::new(ga::GenomePool::new(
-                ClipGenome::new(cfg()),
-                cfg().population_size,
-                cfg().mutation_probability,
+                ClipGenome::new(cfg.clone()),
+                cfg.population_size,
+                cfg.mutation_probability,
             )),
             eval_until: Cell::new(0),
             prefix_clip: RefCell::new(ClipGenome::from(vec![])),
         }
+    }
+
+    fn cfg(&self) -> &Config {
+        self.cfg.as_ref()
     }
 
     fn tick_until(&self, duration: &Duration) {
@@ -132,7 +129,8 @@ impl Prog {
             };
 
             if !skip_inst.contains(&inst_idx) {
-                let (elapsed_qns, elapsed_real) = self.clock.borrow().elapsed(cfg().beats_per_bar);
+                let (elapsed_qns, elapsed_real) =
+                    self.clock.borrow().elapsed(self.cfg().beats_per_bar);
                 println!(
                     "[{:.2}s | {}] <{}> {}",
                     elapsed_real.as_secs_f32(),
@@ -158,7 +156,7 @@ impl Prog {
                 ClipInst::Call(seq_call) => {
                     let clock = self.clock.borrow();
                     let mut seq = self.seq.borrow_mut();
-                    if let Err(e) = seq.apply(&*clock, seq_call, cfg().skip_allocated) {
+                    if let Err(e) = seq.apply(&*clock, seq_call, self.cfg().skip_allocated) {
                         println!("<! failed to queue: {}", e); // Just keep playing.
                     }
                 }
@@ -176,7 +174,7 @@ impl Prog {
         }
         // Allow it to complete some of the sequences.
         println!("<- end clip");
-        self.tick_until(&cfg().clip_tail);
+        self.tick_until(&self.cfg().clip_tail);
 
         // Do not stop() here, so that chained clips sound smoother. Need to explicitly call
         // stop() where needed.
@@ -398,7 +396,7 @@ impl Prog {
                             }
                         };
 
-                        if cfg().population_path.is_empty() {
+                        if self.cfg().population_path.is_empty() {
                             println!("<! no population path set");
                         } else {
                             let file_prefix = parts[1];
@@ -408,7 +406,8 @@ impl Prog {
                                 if idx >= limit {
                                     break;
                                 }
-                                let path = cfg()
+                                let path = self
+                                    .cfg()
                                     .population_path()
                                     .join(format!("{}_{}.ch", file_prefix, idx));
                                 if let Err(e) = clip.1.deserialize(&path) {
@@ -496,13 +495,13 @@ impl Prog {
                                     }
                                 }
                             }
-                            if !cfg().song_continue {
+                            if !self.cfg().song_continue {
                                 self.stop();
                             }
                         }
                         self.stop();
                     } else if let Some(suffix) = cmd.strip_prefix("w ") {
-                        if cfg().population_path.is_empty() {
+                        if self.cfg().population_path.is_empty() {
                             println!("<! no population path set");
                         } else if suffix.is_empty() {
                             println!("<! must provide filename prefix");
@@ -511,7 +510,8 @@ impl Prog {
                             let pool = self.pool.borrow();
                             for idx in 0..pool.population().len() {
                                 let clip = &pool.population()[idx].1;
-                                let path = cfg()
+                                let path = self
+                                    .cfg()
                                     .population_path()
                                     .join(format!("{}_{}.ch", file_prefix, idx));
                                 if let Err(e) = clip.serialize(&path) {
@@ -561,7 +561,7 @@ impl Prog {
 
             // One genome wins from a set of tournament_size, but we need 2 genomes to replace the
             // deleted genome.
-            let selection = pool.select_uniform(cfg().tournament_size * 2);
+            let selection = pool.select_uniform(self.cfg().tournament_size * 2);
             println!("<- advancing to generation {}", pool.generation() + 1);
             for clip_ref in &selection {
                 let clip = &mut pool[clip_ref];
@@ -587,8 +587,8 @@ impl Prog {
 
             // Steady-state with tournament-selection and the delete oldest replacement strategy.
             let mut mates = vec![];
-            for group in (0..selection.len()).step_by(cfg().tournament_size) {
-                let mut tournament = selection[group..group + cfg().tournament_size].to_vec();
+            for group in (0..selection.len()).step_by(self.cfg().tournament_size) {
+                let mut tournament = selection[group..group + self.cfg().tournament_size].to_vec();
                 pool.sort_selection(&mut tournament);
                 mates.push(*tournament.first().unwrap());
             }

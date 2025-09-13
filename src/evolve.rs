@@ -15,6 +15,7 @@ use std::hash::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 // === Globals =================================================================
 
@@ -259,7 +260,7 @@ pub struct ClipGenome {
     /// If `clip` has been initialized.
     init: bool,
     /// The Config instance used for the population.
-    cfg: Option<&'static Config>,
+    cfg: Option<Arc<Config>>,
 }
 
 impl From<Clip> for ClipGenome {
@@ -279,7 +280,7 @@ impl From<&ClipGenome> for Clip {
 }
 
 impl ClipGenome {
-    pub fn new(cfg: &'static Config) -> Self {
+    pub fn new(cfg: Arc<Config>) -> Self {
         ClipGenome {
             cfg: Some(cfg),
             ..Default::default()
@@ -287,7 +288,7 @@ impl ClipGenome {
     }
 
     fn cfg(&self) -> &Config {
-        self.cfg.unwrap()
+        self.cfg.as_ref().unwrap()
     }
 
     pub fn serialize(&self, path: &Path) -> std::result::Result<(), io::Error> {
@@ -717,7 +718,7 @@ impl Genome for ClipGenome {
     fn with_blueprint(mut self, blueprint: &Self) -> Self {
         // From default() or Clip.
         assert!(blueprint.cfg.is_some());
-        self.cfg = blueprint.cfg;
+        self.cfg = blueprint.cfg.clone();
 
         if !self.init {
             // From default().
