@@ -86,16 +86,17 @@ Interactive Evolution::
 
 The evolutionary process maintains a population of MIDI clips, each with:
 
-* fixed length (default 30 beats);
+* fixed length (default 30 instructions);
 * fitness score measuring musical quality;
 * generation number tracking its evolution.
 
 Connecting a Synthesizer
 """"""""""""""""""""""""
 
-The CLI tool writes the MIDI stream to a device file, for example a software
-synthesizer connected to a virtual device. For example, on Linux this can be
-done with the help of `fluidsynth <https://www.fluidsynth.org>`_:
+The CLI tool writes the MIDI stream to a device file, which can be a hardware
+synthesizer or a software synthesizer connected to a virtual device. For
+example, we can use `fluidsynth <https://www.fluidsynth.org>`_ for quick
+testing:
 
 .. code-block:: sh
 
