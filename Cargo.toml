@@ -3,6 +3,8 @@ name = "bach"
 version = "0.1.0"
 edition = "2024"
 authors = ["Marco Elver <me@marcoelver.com>"]
+license = "Apache-2.0"
+description = "Evolutionary MIDI generation library"
 
 [dependencies]
 rand = "0.9.1"

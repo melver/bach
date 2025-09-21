@@ -1,11 +1,20 @@
-=============================
-Bach: MIDI Command-Line Tools
-=============================
+===============================
+Bach: Evolutionary MIDI Library
+===============================
 
-Simple CLI tools to work with MIDI clips.
+*Bach* is a Rust library for algorithmic MIDI generation. The library contains
+an `evolutionary algorithm`_ for automatic and interactive generation of MIDI
+clips, allowing users to guide the creative process while exploring emergent
+musical patterns.
 
-Usage
+Tools
 =====
+
+A few example CLI tools that make use of the library are included. The most
+useful one is called `bach-evolve`_.
+
+The tools included have only been tested on Linux-based systems. The core
+``bach`` crate does not have any platform-specific dependencies.
 
 bach-evolve
 -----------
@@ -23,7 +32,7 @@ Parameters:
 * `<midi-device>`: MIDI output device
 
 Interactive Commands
---------------------
+""""""""""""""""""""
 
 Main Mode::
 
@@ -55,7 +64,7 @@ Clip Editor Mode::
   w <file>         : write
 
 Example Usage
--------------
+"""""""""""""
 
 Interactive Evolution::
 
@@ -81,11 +90,12 @@ The evolutionary process maintains a population of MIDI clips, each with:
 * fitness score measuring musical quality;
 * generation number tracking its evolution.
 
-Testing
-=======
+Connecting a Synthesizer
+""""""""""""""""""""""""
 
-It helps having a software synthesizer. On Linux this can be done with the help
-of `fluidsynth <https://www.fluidsynth.org>`_:
+The CLI tool writes the MIDI stream to a device file, for example a software
+synthesizer connected to a virtual device. For example, on Linux this can be
+done with the help of `fluidsynth <https://www.fluidsynth.org>`_:
 
 .. code-block:: sh
 
@@ -99,6 +109,64 @@ of `fluidsynth <https://www.fluidsynth.org>`_:
    ... pipe raw MIDI to /dev/snd/midiC0D2 ...
    # disconnect when done
    aconnect -x
+
+Evolutionary Algorithm
+======================
+
+Bach implements a **Genetic Programming (GP)** approach to evolve musical
+sequences. Unlike traditional genetic algorithms that operate on fixed-length
+bit strings, Bach evolves programs written in a domain-specific language (DSL).
+
+Clip Representation
+-------------------
+
+Each musical clip is represented as a program consisting of instructions:
+
+* **QueueNote**: Add a single note with pitch, velocity, and duration
+* **QueueSequence**: Add euclidean sequence patterns with note lists
+* **Tick**: Advance time by specified duration
+* **Jump**: Branch forwards or backwards in the instruction sequence
+* **QueueControl**: MIDI control change messages
+
+This representation acts as a "compression" scheme that allows complex musical
+patterns to emerge from relatively short programs.
+
+Fitness Evaluation
+------------------
+
+Fitness scoring is based on music theory heuristics. The algorithm evaluates
+clips across multiple dimensions:
+
+**Harmonic Analysis**:
+
+* *Vertical harmony*: Compatibility of simultaneous notes (chords) using
+  interval-based scoring
+* *Horizontal harmony*: Quality of note progressions over time
+* Configurable harmony table maps semitone intervals to preference scores
+
+**Musical Structure**:
+
+* Channel balance across MIDI channels
+* Repetition detection and scoring
+* Rest/silence distribution
+* Sequence density normalization
+
+**Weights and Configuration**: All scoring components use configurable weights,
+allowing users to bias evolution toward specific musical characteristics (e.g.,
+emphasizing melody vs. harmony, encouraging or discouraging repetition).
+
+Evolutionary Process
+--------------------
+
+The algorithm uses **steady-state evolution** with:
+
+* **Crossover**: Program segments are exchanged between parent clips
+* **Mutation**: Random instruction modifications at configurable probability
+* **Tournament selection**: Best individuals from random subsets become parents
+* **Replacement**: Delete the oldest replacement strategy
+
+The process supports both manual fitness assignment (interactive evolution) and
+automatic scoring based on the heuristics above.
 
 License
 =======
