@@ -304,6 +304,13 @@ impl Default for SystemClock {
 }
 
 impl SystemClock {
+    /// Minimum OS sleep time; if we have to wait a lower duration, we will busy wait.
+    const MIN_SLEEP_TIME: time::Duration = if cfg!(target_os = "linux") {
+        time::Duration::from_micros(50)
+    } else {
+        time::Duration::from_micros(500)
+    };
+
     /// MIDI BPM is quarter notes per minute; PPQN is pulses per quarter note.
     pub fn new(bpm: u32, ppqn: u32) -> Self {
         assert!(bpm > 0, "BPM cannot be 0");
@@ -332,19 +339,19 @@ impl TickClock for SystemClock {
             self.start_time = time::Instant::now();
             time::Duration::ZERO
         } else {
-            let sync_elapsed = duration_per_tick * (self.tick() as u32);
+            let sync_elapsed = duration_per_tick * u32::try_from(self.tick()).unwrap();
             let mut elapsed;
             loop {
                 elapsed = self.start_time.elapsed();
                 if elapsed >= sync_elapsed {
                     break;
                 }
-                // Try to sleep for half of the time we still have to wait, hoping that the OS will
-                // actually wake us some time before the sync point.
+                // Sleep less than the time we still have to wait, assuming that the OS will wake
+                // us some time before the sync point.
                 let sleep_time = (sync_elapsed - elapsed) / 4;
-                // It's unlikely modern non-RT OSs can precisely sleep this low.
-                // Note: This may be more precise with RT OSes.
-                if sleep_time < time::Duration::from_micros(20) {
+                if sleep_time < SystemClock::MIN_SLEEP_TIME {
+                    // It is unlikely modern non-RT OSs can precisely sleep this low; busy wait
+                    // until we hit the sync point.
                     continue;
                 }
                 thread::sleep(sleep_time);
@@ -869,9 +876,12 @@ mod tests {
         while c.tick() < 10 {
             let (_tpm, drift) = c.await_tick();
             // Just sanity check - we can't rely on this being too precise as long as we're not
-            // running a RT OS. On an unloaded system this is typically below 10, but not
-            // garanteed.
-            assert!(drift < time::Duration::from_micros(2000));
+            // running a RT OS. On an unloaded system this is typically "low enough".
+            assert!(
+                drift < time::Duration::from_micros(2000),
+                "Clock drift of {:?} is too large",
+                drift
+            );
         }
     }
 
