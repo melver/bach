@@ -9,6 +9,7 @@ use bach::ga::{self, Genome};
 use bach::sequencer::{self, ClipInst, TickClock};
 use bach::units::*;
 use rand::Rng;
+#[cfg(not(windows))]
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
 use std::cmp;
@@ -18,7 +19,6 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -610,10 +610,11 @@ impl Drop for Prog {
     }
 }
 
+#[cfg(not(windows))]
 fn main() {
     let mut signals = Signals::new([SIGINT]).unwrap();
     let sig_handle = signals.handle();
-    let sig_handler = thread::spawn(move || {
+    let sig_handler = std::thread::spawn(move || {
         for _ in &mut signals {
             println!("<- stopping ...");
             RUNNING.store(false, Ordering::Relaxed);
@@ -623,4 +624,9 @@ fn main() {
     Prog::new().run();
     sig_handle.close();
     sig_handler.join().unwrap();
+}
+
+#[cfg(windows)]
+pub fn main() {
+    Prog::new().run();
 }
