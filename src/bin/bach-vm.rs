@@ -28,7 +28,7 @@ fn main() {
 
     // Get scale and time signature first.
     let mut map_note: Option<Box<dyn Fn(i8) -> Note>> = None;
-    let mut map_duration: Option<Box<dyn Fn(u32) -> Duration>> = None;
+    let mut map_duration: Option<Box<dyn Fn(u64) -> Duration>> = None;
     for line in lines.by_ref() {
         if line.starts_with('#') {
             continue;
@@ -43,7 +43,7 @@ fn main() {
             }
         } else if let Some(suffix) = line.strip_prefix(".time_sig ") {
             map_duration = match suffix.parse().unwrap() {
-                Duration::Ticks(_) => Some(Box::new(|d| Duration::Ticks(d as u64))),
+                Duration::Ticks(_) => Some(Box::new(Duration::Ticks)),
                 Duration::Beats(1, bar) => Some(Box::new(move |d| Duration::Beats(d, bar))),
                 _ => panic!("invalid time signature: {}", suffix),
             }
@@ -86,7 +86,7 @@ fn main() {
         vmcore.eval(None).unwrap();
         // Mailbox 0 denotes tick delta.
         let tick_delta = match mboxes.borrow_mut().remove(&0).expect("require delay") {
-            Op::Int(i) if i >= 0 => (vmstate.map_duration)(i as u32),
+            Op::Int(i) if i >= 0 => (vmstate.map_duration)(i as u64),
             op => panic!("unsupported tick delta: {:?}", op),
         };
         let mut seq = vmstate.seq.borrow_mut();

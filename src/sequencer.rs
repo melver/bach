@@ -206,7 +206,7 @@ impl TickClockBase {
         match *duration {
             Duration::Ticks(ticks) => Some(ticks),
             Duration::Beats(beats, beats_per_bar) => {
-                Some(((beats as u64) * 4 * (self.ppqn as u64)) / (beats_per_bar as u64))
+                Some((beats * 4 * (self.ppqn as u64)) / beats_per_bar)
             }
             Duration::Begin => None,
             Duration::End => Some(0),
@@ -214,8 +214,8 @@ impl TickClockBase {
     }
 
     /// Return the current elapsed time in beats.
-    fn elapsed(&self, beats_per_bar: u32) -> Duration {
-        let on_beat = ((self.tick * beats_per_bar as u64) / (self.ppqn * 4) as u64) as u32;
+    fn elapsed(&self, beats_per_bar: u64) -> Duration {
+        let on_beat = (self.tick * beats_per_bar) / (self.ppqn * 4) as u64;
         Duration::Beats(on_beat, beats_per_bar)
     }
 }
@@ -256,7 +256,7 @@ pub trait TickClock {
     fn await_tick(&mut self) -> (time::Duration, time::Duration);
 
     /// Return the current elapsed time in beats and absolute time.
-    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration);
+    fn elapsed(&self, beats_per_bar: u64) -> (Duration, time::Duration);
 }
 
 /// Not a real clock.
@@ -279,7 +279,7 @@ impl TickClock for DummyClock {
         (time::Duration::ZERO, time::Duration::ZERO)
     }
 
-    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
+    fn elapsed(&self, beats_per_bar: u64) -> (Duration, time::Duration) {
         (self.base().elapsed(beats_per_bar), time::Duration::ZERO)
     }
 }
@@ -371,7 +371,7 @@ impl TickClock for SystemClock {
         (duration_per_tick, drift)
     }
 
-    fn elapsed(&self, beats_per_bar: u32) -> (Duration, time::Duration) {
+    fn elapsed(&self, beats_per_bar: u64) -> (Duration, time::Duration) {
         (
             self.base().elapsed(beats_per_bar),
             if self.tick() == 0 {
@@ -424,7 +424,7 @@ impl MidiSequencer {
         self.tick += 1; // advance tick
 
         let ticks_per_clock = tick_clock
-            .get_ticks(&Duration::Beats(1, 4 * CLOCKS_PER_QN))
+            .get_ticks(&Duration::Beats(1, 4 * CLOCKS_PER_QN as u64))
             .unwrap();
         if self.send_clock && (self.tick - 1).is_multiple_of(ticks_per_clock) {
             // Clock has highest priority; send it first.
@@ -711,7 +711,7 @@ pub struct SeqVmState {
     pub clock: RefCell<Box<dyn TickClock>>,
     pub seq: RefCell<MidiSequencer>,
     pub map_note: Box<dyn Fn(i8) -> Note>,
-    pub map_duration: Box<dyn Fn(u32) -> Duration>,
+    pub map_duration: Box<dyn Fn(u64) -> Duration>,
 }
 
 pub enum SeqVmInst {
@@ -730,7 +730,7 @@ impl InstExtension for SeqVmInst {
                         Op::Float(f) => f as i32,
                     };
                     let duration = if duration_int > 0 {
-                        (vmstate.map_duration)(duration_int as u32)
+                        (vmstate.map_duration)(duration_int as u64)
                     } else if duration_int == 0 {
                         Duration::End
                     } else {
@@ -911,7 +911,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn()),
+            &Duration::Beats(3, 4 * clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
@@ -933,7 +933,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn()),
+            &Duration::Beats(3, 4 * clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
@@ -955,7 +955,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn()),
+            &Duration::Beats(3, 4 * clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock).concat(), vec![0x91, 60, 64]);
@@ -977,7 +977,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(3, 4 * clock.ppqn()),
+            &Duration::Beats(3, 4 * clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock).concat(), vec![0xf8, 0x91, 60, 64]);
@@ -999,7 +999,7 @@ mod tests {
             1,
             &Note::Maj(60, 0),
             &Velocity::Mf,
-            &Duration::Beats(1, clock.ppqn()),
+            &Duration::Beats(1, clock.ppqn() as u64),
         )
         .unwrap();
         seq.queue_note(
@@ -1007,7 +1007,7 @@ mod tests {
             1,
             &Note::Maj(60, 1),
             &Velocity::Mf,
-            &Duration::Beats(1, clock.ppqn()),
+            &Duration::Beats(1, clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(
@@ -1020,7 +1020,7 @@ mod tests {
             1,
             &Note::Maj(60, 2),
             &Velocity::Mf,
-            &Duration::Beats(1, 4 * clock.ppqn()),
+            &Duration::Beats(1, 4 * clock.ppqn() as u64),
         )
         .unwrap();
         assert_eq!(seq.tick(&clock).concat(), vec![0x91, 64, 64]);
@@ -1045,7 +1045,7 @@ mod tests {
             1,
             &[Note::Maj(60, 0), Note::Maj(60, 1), Note::Maj(60, 2)],
             &Velocity::Mf,
-            &Duration::Beats(1, 4 * clock.ppqn()),
+            &Duration::Beats(1, 4 * clock.ppqn() as u64),
             &[true, false, true, true, false, true],
             false,
         )

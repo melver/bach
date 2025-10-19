@@ -84,7 +84,7 @@ pub struct Config {
     pub midi_ver: u32,
     pub cc: Vec<(u8, u8, (u8, u8))>,
     pub channels: (u8, u8),
-    pub beats_per_bar: u32,
+    pub beats_per_bar: u64,
     pub note_scale: Vec<Note>,
     pub note_min: Vec<Note>,
     pub note_max: Vec<Note>,
@@ -221,8 +221,8 @@ impl Config {
         self.channels.1 - self.channels.0 + 1
     }
 
-    pub fn beats_per_bar_order(&self) -> u32 {
-        self.beats_per_bar.ilog2()
+    pub fn beats_per_bar_order(&self) -> u64 {
+        self.beats_per_bar.ilog2() as u64
     }
 
     /// Returns a note in the configured scale and the index into the list of note scales.
@@ -507,8 +507,8 @@ impl ClipGenome {
         // beat, and each entry contains a list of notes that are playing.
         let sheet = {
             let mut sheet: Vec<Vec<Note>> = vec![];
-            let mut cur_beat: u32 = 0;
-            let mut insert_sheet = |idx: u32, note: Note| {
+            let mut cur_beat: u64 = 0;
+            let mut insert_sheet = |idx: u64, note: Note| {
                 let idx_ = idx as usize;
                 if idx_ >= sheet.len() {
                     sheet.resize(idx_ + 1, vec![]);

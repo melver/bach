@@ -14,7 +14,7 @@ pub enum Duration {
     Ticks(u64),
     /// Beats, and beats per bar. Note: This is unlike MIDI, which usually assumes a beat is a
     /// quarter note.
-    Beats(u32, u32),
+    Beats(u64, u64),
     /// Beginning of note duration, until explicit end.
     Begin,
     /// End of note duration (required matching Begin).
