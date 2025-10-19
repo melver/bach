@@ -181,8 +181,8 @@ impl TickClockBase {
             CLOCKS_PER_QN
         );
         assert!(
-            ppqn % CLOCKS_PER_QN == 0,
-            "PPQN must be divisible by {}",
+            ppqn.is_multiple_of(CLOCKS_PER_QN),
+            "PPQN must be a multiple of {}",
             CLOCKS_PER_QN
         );
         TickClockBase {
@@ -418,7 +418,7 @@ impl MidiSequencer {
         let ticks_per_clock = tick_clock
             .get_ticks(&Duration::Beats(1, 4 * CLOCKS_PER_QN))
             .unwrap();
-        if self.send_clock && (self.tick - 1) % ticks_per_clock == 0 {
+        if self.send_clock && (self.tick - 1).is_multiple_of(ticks_per_clock) {
             // Clock has highest priority; send it first.
             let mut ret = vec![MidiMsg::Clock.to_midi(self.midi_ver)];
             if let Some(ref mut queue) = queue_opt {
