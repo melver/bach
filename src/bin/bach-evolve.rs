@@ -100,13 +100,20 @@ impl Prog {
         });
     }
 
-    fn stop(&self) {
+    fn stop(&self, song: bool) {
         // Stop all still playing notes.
-        let stop_clip = self.seq.borrow_mut().stop();
+        let mut seq = self.seq.borrow_mut();
+        let tick = seq.tick;
+        let stop_clip = seq.stop();
         let mut midi_device = self.midi_device.borrow_mut();
         midi_device.write_all(&stop_clip.concat()).unwrap();
         midi_device.flush().unwrap();
-        self.clock.borrow_mut().reset();
+        if song {
+            // Continue at same tick to ensure correct synchronization.
+            seq.tick = tick;
+        } else {
+            self.clock.borrow_mut().reset();
+        }
     }
 
     fn play(&self, clip: &ClipGenome) {
@@ -253,7 +260,7 @@ impl Prog {
                     } else if cmd.to_lowercase() == "p" {
                         loop {
                             self.play(clip);
-                            self.stop();
+                            self.stop(false);
                             if !is_running() || cmd == "p" {
                                 break;
                             }
@@ -496,10 +503,10 @@ impl Prog {
                                 }
                             }
                             if !self.cfg().song_continue {
-                                self.stop();
+                                self.stop(true);
                             }
                         }
-                        self.stop();
+                        self.stop(false);
                     } else if let Some(suffix) = cmd.strip_prefix("w ") {
                         if self.cfg().population_path.is_empty() {
                             println!("<! no population path set");
@@ -575,7 +582,7 @@ impl Prog {
                     clip.1.eval();
                 } else {
                     self.play(&clip.1);
-                    self.stop();
+                    self.stop(false);
                     while clip.1.fitness.is_none() {
                         println!("<? please set fitness");
                         if !self.cmd_prompt(Some(&mut clip.1)) {
@@ -606,7 +613,7 @@ impl Prog {
 
 impl Drop for Prog {
     fn drop(&mut self) {
-        self.stop();
+        self.stop(false);
     }
 }
 

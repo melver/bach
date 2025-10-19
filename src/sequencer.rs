@@ -332,14 +332,22 @@ impl TickClock for SystemClock {
     }
 
     fn await_tick(&mut self) -> (time::Duration, time::Duration) {
-        let ticks_per_minute = self.bpm * self.ppqn();
+        let ticks_per_minute = self.bpm.saturating_mul(self.ppqn());
         let duration_per_tick = time::Duration::from_secs(60) / ticks_per_minute;
 
         let drift = if self.tick() == 0 {
             self.start_time = time::Instant::now();
             time::Duration::ZERO
         } else {
-            let sync_elapsed = duration_per_tick * u32::try_from(self.tick()).unwrap();
+            // Duration implements only Mul<u32>; emulate 64-bit multiplication.
+            let mut sync_elapsed = time::Duration::ZERO;
+            let mut remaining_ticks = self.tick();
+            while remaining_ticks > u32::MAX as u64 {
+                sync_elapsed += duration_per_tick * u32::MAX;
+                remaining_ticks -= u32::MAX as u64;
+            }
+            sync_elapsed += duration_per_tick * (remaining_ticks as u32);
+
             let mut elapsed;
             loop {
                 elapsed = self.start_time.elapsed();
@@ -883,6 +891,15 @@ mod tests {
                 drift
             );
         }
+    }
+
+    #[test]
+    fn tick_clock_u64() {
+        let mut c = SystemClock::new(u32::MAX, 48);
+        let (tpm, _drift) = c.await_tick();
+        c.start_time -= tpm * u32::MAX;
+        c.forward_tick(u32::MAX as u64);
+        c.await_tick();
     }
 
     #[test]
