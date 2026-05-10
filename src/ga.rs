@@ -3,7 +3,7 @@
 
 //! Simple framework for implementing Genetic Algorithms.
 
-use rand::Rng;
+use rand::RngExt;
 use std::cmp;
 use std::collections::HashSet;
 use std::ops::{Index, IndexMut};

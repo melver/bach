@@ -7,7 +7,7 @@ use crate::Result;
 use crate::ga::{self, Genome};
 use crate::sequencer::{self, Clip, ClipInst, SeqCall};
 use crate::units::*;
-use rand::{Rng, rngs::ThreadRng};
+use rand::{RngExt, rngs::ThreadRng};
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 use std::fs;

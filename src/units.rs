@@ -325,7 +325,7 @@ impl Display for Velocity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
+    use rand::RngExt;
 
     #[test]
     fn scales() {

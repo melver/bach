@@ -8,7 +8,7 @@ use bach::evolve::*;
 use bach::ga::{self, Genome};
 use bach::sequencer::{self, ClipInst, TickClock};
 use bach::units::*;
-use rand::Rng;
+use rand::RngExt;
 #[cfg(not(windows))]
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::cell::{Cell, RefCell};
