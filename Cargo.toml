@@ -8,6 +8,8 @@ description = "Evolutionary MIDI generation library"
 
 [dependencies]
 rand = "0.9.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 signal-hook = "0.3.17"
 
 # Build smaller binaries in release mode.
