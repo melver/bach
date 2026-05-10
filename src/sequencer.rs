@@ -192,17 +192,17 @@ impl TickClockBase {
     }
 
     /// Reset all internal state to the initial tick.
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.tick = 0
     }
 
     /// Fast-forwards ticks without real time synchronization.
-    fn forward_tick(&mut self, ticks: u64) {
+    pub fn forward_tick(&mut self, ticks: u64) {
         self.tick += ticks;
     }
 
     /// Convert a duration into MIDI sequencer ticks based on the clock's configuration.
-    fn get_ticks(&self, duration: &Duration) -> Option<u64> {
+    pub fn get_ticks(&self, duration: &Duration) -> Option<u64> {
         match *duration {
             Duration::Ticks(ticks) => Some(ticks),
             Duration::Beats(beats, beats_per_bar) => {
@@ -214,7 +214,7 @@ impl TickClockBase {
     }
 
     /// Return the current elapsed time in beats.
-    fn elapsed(&self, beats_per_bar: u64) -> Duration {
+    pub fn elapsed(&self, beats_per_bar: u64) -> Duration {
         let on_beat = (self.tick * beats_per_bar) / (self.ppqn * 4) as u64;
         Duration::Beats(on_beat, beats_per_bar)
     }
