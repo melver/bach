@@ -40,6 +40,13 @@ fn main() {
                 Note::HMin(k, o) => Some(Box::new(move |n| Note::HMin(k, o + n))),
                 Note::MMin(k, o) => Some(Box::new(move |n| Note::MMin(k, o + n))),
                 Note::Phr(k, o) => Some(Box::new(move |n| Note::Phr(k, o + n))),
+                Note::Dor(k, o) => Some(Box::new(move |n| Note::Dor(k, o + n))),
+                Note::Lyd(k, o) => Some(Box::new(move |n| Note::Lyd(k, o + n))),
+                Note::Mix(k, o) => Some(Box::new(move |n| Note::Mix(k, o + n))),
+                Note::Loc(k, o) => Some(Box::new(move |n| Note::Loc(k, o + n))),
+                Note::MinPent(k, o) => Some(Box::new(move |n| Note::MinPent(k, o + n))),
+                Note::MajPent(k, o) => Some(Box::new(move |n| Note::MajPent(k, o + n))),
+                Note::Blues(k, o) => Some(Box::new(move |n| Note::Blues(k, o + n))),
             }
         } else if let Some(suffix) = line.strip_prefix(".time_sig ") {
             map_duration = match suffix.parse().unwrap() {

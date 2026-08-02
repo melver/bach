@@ -74,6 +74,20 @@ pub enum Note {
     MMin(u8, i8),
     /// Phrygian modes.
     Phr(u8, i8),
+    /// Dorian modes.
+    Dor(u8, i8),
+    /// Lydian modes.
+    Lyd(u8, i8),
+    /// Mixolydian modes.
+    Mix(u8, i8),
+    /// Locrian modes.
+    Loc(u8, i8),
+    /// Minor pentatonic scales.
+    MinPent(u8, i8),
+    /// Major pentatonic scales.
+    MajPent(u8, i8),
+    /// Blues scales (minor pentatonic with added flat fifth "blue note").
+    Blues(u8, i8),
     // TODO: Support more.
 }
 
@@ -116,6 +130,48 @@ impl FromStr for Note {
                 parts[0].parse().map_err(|e| format!("{}", e))?,
                 parts[1].parse().map_err(|e| format!("{}", e))?,
             ))
+        } else if s.starts_with("dor@") {
+            let parts: Vec<&str> = s.trim_start_matches("dor@").split(':').collect();
+            Ok(Note::Dor(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("lyd@") {
+            let parts: Vec<&str> = s.trim_start_matches("lyd@").split(':').collect();
+            Ok(Note::Lyd(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("mix@") {
+            let parts: Vec<&str> = s.trim_start_matches("mix@").split(':').collect();
+            Ok(Note::Mix(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("loc@") {
+            let parts: Vec<&str> = s.trim_start_matches("loc@").split(':').collect();
+            Ok(Note::Loc(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("minpent@") {
+            let parts: Vec<&str> = s.trim_start_matches("minpent@").split(':').collect();
+            Ok(Note::MinPent(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("majpent@") {
+            let parts: Vec<&str> = s.trim_start_matches("majpent@").split(':').collect();
+            Ok(Note::MajPent(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
+        } else if s.starts_with("blues@") {
+            let parts: Vec<&str> = s.trim_start_matches("blues@").split(':').collect();
+            Ok(Note::Blues(
+                parts[0].parse().map_err(|e| format!("{}", e))?,
+                parts[1].parse().map_err(|e| format!("{}", e))?,
+            ))
         } else {
             Err(format!("unknown note: {}", s))
         }
@@ -131,6 +187,13 @@ impl Display for Note {
             Note::HMin(key, offset) => write!(f, "hmin@{}:{}", key, offset),
             Note::MMin(key, offset) => write!(f, "mmin@{}:{}", key, offset),
             Note::Phr(key, offset) => write!(f, "phr@{}:{}", key, offset),
+            Note::Dor(key, offset) => write!(f, "dor@{}:{}", key, offset),
+            Note::Lyd(key, offset) => write!(f, "lyd@{}:{}", key, offset),
+            Note::Mix(key, offset) => write!(f, "mix@{}:{}", key, offset),
+            Note::Loc(key, offset) => write!(f, "loc@{}:{}", key, offset),
+            Note::MinPent(key, offset) => write!(f, "minpent@{}:{}", key, offset),
+            Note::MajPent(key, offset) => write!(f, "majpent@{}:{}", key, offset),
+            Note::Blues(key, offset) => write!(f, "blues@{}:{}", key, offset),
         }
     }
 }
@@ -234,6 +297,106 @@ impl From<&Note> for Result<u8> {
                         4 => 7,
                         5 => 8,
                         6 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Dor(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 7);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 3,
+                        3 => 5,
+                        4 => 7,
+                        5 => 9,
+                        6 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Lyd(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 7);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 4,
+                        3 => 6,
+                        4 => 7,
+                        5 => 9,
+                        6 => 11,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Mix(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 7);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 4,
+                        3 => 5,
+                        4 => 7,
+                        5 => 9,
+                        6 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Loc(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 7);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 1,
+                        2 => 3,
+                        3 => 5,
+                        4 => 6,
+                        5 => 8,
+                        6 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::MinPent(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 5);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 3,
+                        2 => 5,
+                        3 => 7,
+                        4 => 10,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::MajPent(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 5);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 2,
+                        2 => 4,
+                        3 => 7,
+                        4 => 9,
+                        _ => unreachable!(),
+                    }
+            }
+            Note::Blues(key, note) => {
+                let (octave, offset) = get_octave_offset(note, 6);
+                (key as i32)
+                    + octave * 12
+                    + match offset {
+                        0 => 0,
+                        1 => 3,
+                        2 => 5,
+                        3 => 6,
+                        4 => 7,
+                        5 => 10,
                         _ => unreachable!(),
                     }
             }
@@ -353,12 +516,98 @@ mod tests {
     }
 
     #[test]
+    fn diatonic_modes() {
+        let assert_notes_eq = |notes: &[Note], raw: &[u8]| {
+            for (note, expect) in notes.iter().zip(raw) {
+                let converted: Result<u8> = note.into();
+                assert_eq!(converted, Ok(*expect), "{}", note);
+            }
+        };
+        // All modes over one octave, plus the octave itself and one degree below.
+        let mode = |f: fn(u8, i8) -> Note| (-1..=7).map(|o| f(60, o)).collect::<Vec<_>>();
+
+        assert_notes_eq(&mode(Note::Dor), &[58, 60, 62, 63, 65, 67, 69, 70, 72]);
+        assert_notes_eq(&mode(Note::Lyd), &[59, 60, 62, 64, 66, 67, 69, 71, 72]);
+        assert_notes_eq(&mode(Note::Mix), &[58, 60, 62, 64, 65, 67, 69, 70, 72]);
+        assert_notes_eq(&mode(Note::Loc), &[58, 60, 61, 63, 65, 66, 68, 70, 72]);
+
+        // Modes are rotations of the major scale: the n-th mode starting on the
+        // major scale's n-th degree spans the same pitches.
+        for degree in 0..7 {
+            let rotated: Result<u8> = (&Note::Maj(60, degree)).into();
+            let rotated = rotated.unwrap();
+            let expect: Result<u8> = (&Note::Maj(60, degree + 3)).into();
+            let as_mode: Result<u8> = match degree {
+                1 => (&Note::Dor(rotated, 3)).into(),
+                3 => (&Note::Lyd(rotated, 3)).into(),
+                4 => (&Note::Mix(rotated, 3)).into(),
+                6 => (&Note::Loc(rotated, 3)).into(),
+                _ => continue,
+            };
+            assert_eq!(as_mode, expect, "degree {}", degree);
+        }
+
+        assert_notes_eq(&[Note::Dor(61, -1), Note::Loc(61, 7)], &[59, 73]);
+    }
+
+    #[test]
+    fn pentatonic_scales() {
+        let assert_note_eq = |note: Note, raw| {
+            let converted: Result<u8> = (&note).into();
+            assert_eq!(converted, Ok(raw));
+        };
+
+        assert_note_eq(Note::MinPent(60, -5), 48);
+        assert_note_eq(Note::MinPent(60, -1), 58);
+        assert_note_eq(Note::MinPent(60, 0), 60);
+        assert_note_eq(Note::MinPent(60, 1), 63);
+        assert_note_eq(Note::MinPent(60, 2), 65);
+        assert_note_eq(Note::MinPent(60, 3), 67);
+        assert_note_eq(Note::MinPent(60, 4), 70);
+        assert_note_eq(Note::MinPent(60, 5), 72);
+
+        assert_note_eq(Note::MajPent(60, -5), 48);
+        assert_note_eq(Note::MajPent(60, -1), 57);
+        assert_note_eq(Note::MajPent(60, 0), 60);
+        assert_note_eq(Note::MajPent(60, 1), 62);
+        assert_note_eq(Note::MajPent(60, 2), 64);
+        assert_note_eq(Note::MajPent(60, 3), 67);
+        assert_note_eq(Note::MajPent(60, 4), 69);
+        assert_note_eq(Note::MajPent(60, 5), 72);
+
+        assert_note_eq(Note::Blues(60, -6), 48);
+        assert_note_eq(Note::Blues(60, -1), 58);
+        assert_note_eq(Note::Blues(60, 0), 60);
+        assert_note_eq(Note::Blues(60, 1), 63);
+        assert_note_eq(Note::Blues(60, 2), 65);
+        assert_note_eq(Note::Blues(60, 3), 66);
+        assert_note_eq(Note::Blues(60, 4), 67);
+        assert_note_eq(Note::Blues(60, 5), 70);
+        assert_note_eq(Note::Blues(60, 6), 72);
+
+        assert_note_eq(Note::Blues(61, -1), 59);
+        assert_note_eq(Note::Blues(61, 6), 73);
+    }
+
+    #[test]
     fn rand_scales() {
         let mut rng = rand::rng();
         for _ in 0..10000 {
-            let converted: Result<u8> =
-                (&Note::Maj(rng.random_range(55..65), rng.random_range(-20..=20))).into();
-            assert!(converted.is_ok(), "{:?}", converted);
+            let key = rng.random_range(55..65);
+            let offset = rng.random_range(-20..=20);
+            for note in [
+                Note::Maj(key, offset),
+                Note::Dor(key, offset),
+                Note::Lyd(key, offset),
+                Note::Mix(key, offset),
+                Note::Loc(key, offset),
+                Note::MinPent(key, offset),
+                Note::MajPent(key, offset),
+                Note::Blues(key, offset),
+            ] {
+                let converted: Result<u8> = (&note).into();
+                assert!(converted.is_ok(), "{:?}: {:?}", note, converted);
+            }
         }
     }
 
@@ -372,6 +621,13 @@ mod tests {
         assert!("@60".parse() == Ok(Note::Raw(60)));
         assert!("maj@60:-1".parse() == Ok(Note::Maj(60, -1)));
         assert!("maj@60:0".parse() == Ok(Note::Maj(60, 0)));
+        assert!("dor@60:1".parse() == Ok(Note::Dor(60, 1)));
+        assert!("lyd@60:-2".parse() == Ok(Note::Lyd(60, -2)));
+        assert!("mix@60:0".parse() == Ok(Note::Mix(60, 0)));
+        assert!("loc@60:6".parse() == Ok(Note::Loc(60, 6)));
+        assert!("minpent@60:1".parse() == Ok(Note::MinPent(60, 1)));
+        assert!("majpent@60:-1".parse() == Ok(Note::MajPent(60, -1)));
+        assert!("blues@60:3".parse() == Ok(Note::Blues(60, 3)));
 
         assert!("-".parse() == Ok(Velocity::None));
         assert!("mf".parse() == Ok(Velocity::Mf));

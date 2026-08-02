@@ -238,6 +238,13 @@ impl Config {
                 Note::HMin(k, o) => Note::HMin(k, o + note),
                 Note::MMin(k, o) => Note::MMin(k, o + note),
                 Note::Phr(k, o) => Note::Phr(k, o + note),
+                Note::Dor(k, o) => Note::Dor(k, o + note),
+                Note::Lyd(k, o) => Note::Lyd(k, o + note),
+                Note::Mix(k, o) => Note::Mix(k, o + note),
+                Note::Loc(k, o) => Note::Loc(k, o + note),
+                Note::MinPent(k, o) => Note::MinPent(k, o + note),
+                Note::MajPent(k, o) => Note::MajPent(k, o + note),
+                Note::Blues(k, o) => Note::Blues(k, o + note),
             },
         )
     }
