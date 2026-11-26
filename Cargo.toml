@@ -17,3 +17,11 @@ signal-hook = "0.3.17"
 lto = true
 opt-level = "z"
 strip = true  # largest size reduction
+
+[lints.clippy]
+too_many_arguments = "allow"
+comparison_chain = "allow"
+manual_range_contains = "allow"
+type_complexity = "allow"
+uninlined_format_args = "allow"
+needless_range_loop = "allow"

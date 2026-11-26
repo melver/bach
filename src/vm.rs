@@ -386,7 +386,7 @@ mod tests {
             _ => panic!(),
         }
         match "push 12.3".parse() {
-            Ok(Inst::Push(Op::Float(f))) if f == 12.3 => (),
+            Ok(Inst::Push(Op::Float(12.3))) => (),
             _ => panic!(),
         }
         match "invalid".parse::<Inst>() {
